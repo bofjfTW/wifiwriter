@@ -1,5 +1,6 @@
 [CmdletBinding()]
 param(
+    [string]$RunId = "",
     [string]$TargetsPath = "",
     [string]$OutputPath = "",
     [int]$TimeoutMs = 5000
@@ -10,6 +11,10 @@ $ErrorActionPreference = "Continue"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
+if ([string]::IsNullOrWhiteSpace($RunId)) {
+    $RunId = "check_" + (Get-Date).ToString("yyyyMMdd_HHmmss")
+}
+
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($TargetsPath)) {
     $customTargets = Join-Path $ProjectRoot "config\targets.json"
@@ -19,8 +24,12 @@ if ([string]::IsNullOrWhiteSpace($TargetsPath)) {
         $TargetsPath = Join-Path $ProjectRoot "config\targets.example.json"
     }
 }
+if (-not (Test-Path $TargetsPath)) {
+    Write-Error ("FAILED: Targets config file not found: " + $TargetsPath)
+    exit 2
+}
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-    $OutputPath = Join-Path $ProjectRoot "reports\restrictions_check_ps.json"
+    $OutputPath = Join-Path $ProjectRoot ("reports\internal\" + $RunId + "\restrictions_check_ps.json")
 }
 
 $CAT_OK          = [regex]::Unescape('\u6b63\u5e38')
@@ -412,7 +421,9 @@ if ($env:USERNAME) {
 }
 
 $finalOut = [ordered]@{
-    schema_version = "1.0"
+    schema_version = "2.0"
+    run_id         = $RunId
+    run_status     = "SUCCESS"
     checked_at     = (Get-Date).ToString("o")
     targets_source = $maskedTargetsSource
     websites       = $websiteResults
@@ -420,12 +431,19 @@ $finalOut = [ordered]@{
     downloads      = $downloadResults
 }
 
-$outDir = Split-Path -Parent $OutputPath
-if (-not [string]::IsNullOrWhiteSpace($outDir) -and -not (Test-Path $outDir)) {
-    New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+try {
+    $outDir = Split-Path -Parent $OutputPath
+    if (-not [string]::IsNullOrWhiteSpace($outDir) -and -not (Test-Path $outDir)) {
+        New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+    }
+    $tmpPath = $OutputPath + ".tmp." + $PID + "." + ([guid]::NewGuid().ToString("N").Substring(0, 6))
+    $jsonText = $finalOut | ConvertTo-Json -Depth 8
+    [System.IO.File]::WriteAllText($tmpPath, $jsonText, (New-Object System.Text.UTF8Encoding($false)))
+    Move-Item -Path $tmpPath -Destination $OutputPath -Force
+    Write-Output ("OK: Restriction check saved to " + $OutputPath + " (RunId=" + $RunId + ")")
+    exit 0
+} catch {
+    Write-Error ("FAILED: Unable to write restriction check JSON: " + $_.Exception.Message)
+    exit 2
 }
-$jsonText = $finalOut | ConvertTo-Json -Depth 8
-[System.IO.File]::WriteAllText($OutputPath, $jsonText, (New-Object System.Text.UTF8Encoding($false)))
-
-Write-Output ("OK: Restriction check saved to " + $OutputPath)
 

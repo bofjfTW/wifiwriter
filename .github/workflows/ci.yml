@@ -1,0 +1,40 @@
+name: wifiwriter CI (Offline Unit Tests & Privacy Guard)
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests-and-privacy:
+    name: Offline Python Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Run Git allowlist & sensitive information scanner
+        run: python -m src.privacy
+
+      - name: Run offline unit test suite (zero live financial calls)
+        run: python -m unittest discover -s tests -v
+
+      - name: Run offline reproducible disconnect simulation check
+        run: python src/diagnostics.py simulate

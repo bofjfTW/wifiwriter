@@ -1,5 +1,6 @@
 [CmdletBinding()]
 param(
+    [string]$RunId = "",
     [string]$OutputPath = "",
     [string]$MarkdownPath = "",
     [int]$EventLookbackHours = 24
@@ -10,12 +11,16 @@ $ErrorActionPreference = "Continue"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
+if ([string]::IsNullOrWhiteSpace($RunId)) {
+    $RunId = "env_" + (Get-Date).ToString("yyyyMMdd_HHmmss")
+}
+
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-    $OutputPath = Join-Path $ProjectRoot "reports\network_environment.json"
+    $OutputPath = Join-Path $ProjectRoot ("reports\internal\" + $RunId + "\network_environment.json")
 }
 if ([string]::IsNullOrWhiteSpace($MarkdownPath)) {
-    $MarkdownPath = Join-Path $ProjectRoot "reports\network_environment.md"
+    $MarkdownPath = Join-Path $ProjectRoot ("reports\internal\" + $RunId + "\network_environment.md")
 }
 
 $WellKnownPublicIps = @(
@@ -637,7 +642,9 @@ try {
 } catch {}
 
 $result = [ordered]@{
-    schema_version           = "1.0"
+    schema_version           = "2.0"
+    run_id                   = $RunId
+    run_status               = "SUCCESS"
     collected_at             = (Get-Date).ToString("o")
     mode                     = "read_only_local_inspection"
     os_and_system            = $osInfo
@@ -658,12 +665,18 @@ $result = [ordered]@{
     vpn_auth_and_security    = $vpnAndAuth
 }
 
-$outDir = Split-Path -Parent $OutputPath
-if (-not [string]::IsNullOrWhiteSpace($outDir) -and -not (Test-Path $outDir)) {
-    New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+try {
+    $outDir = Split-Path -Parent $OutputPath
+    if (-not [string]::IsNullOrWhiteSpace($outDir) -and -not (Test-Path $outDir)) {
+        New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+    }
+    $tmpPath = $OutputPath + ".tmp." + $PID + "." + ([guid]::NewGuid().ToString("N").Substring(0, 6))
+    $jsonText = $result | ConvertTo-Json -Depth 8
+    [System.IO.File]::WriteAllText($tmpPath, $jsonText, (New-Object System.Text.UTF8Encoding($false)))
+    Move-Item -Path $tmpPath -Destination $OutputPath -Force
+    Write-Output ("OK: Network environment saved to " + $OutputPath + " (RunId=" + $RunId + ")")
+    exit 0
+} catch {
+    Write-Error ("FAILED: Unable to write network environment JSON: " + $_.Exception.Message)
+    exit 2
 }
-
-$jsonText = $result | ConvertTo-Json -Depth 8
-[System.IO.File]::WriteAllText($OutputPath, $jsonText, (New-Object System.Text.UTF8Encoding($false)))
-
-Write-Output ("OK: Network environment saved to " + $OutputPath)

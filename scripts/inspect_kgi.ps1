@@ -1,5 +1,6 @@
 [CmdletBinding()]
 param(
+    [string]$RunId = "",
     [string]$OutputPath = ""
 )
 
@@ -8,9 +9,13 @@ $ErrorActionPreference = "Continue"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
+if ([string]::IsNullOrWhiteSpace($RunId)) {
+    $RunId = "kgi_" + (Get-Date).ToString("yyyyMMdd_HHmmss")
+}
+
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-    $OutputPath = Join-Path $ProjectRoot "reports\kgi_inspection.json"
+    $OutputPath = Join-Path $ProjectRoot ("reports\internal\" + $RunId + "\kgi_inspection.json")
 }
 
 $PatKgiName = [regex]::Unescape('(\u65b0\u8d85\u7d1a\u5927\u4e09\u5143|\u8d85\u7d1a\u5927\u4e09\u5143|\u5927\u4e09\u5143|\u51f1\u57fa|KGI)')
@@ -18,10 +23,22 @@ $FolderSuper3 = [regex]::Unescape('\u8d85\u7d1a\u5927\u4e09\u5143')
 
 function Mask-UserPath([string]$PathStr) {
     if ([string]::IsNullOrWhiteSpace($PathStr)) { return "" }
+    $res = $PathStr -ireplace '([A-Za-z]:\\Users\\)([^\\]+)', '$1<USER>'
     if ($env:USERNAME) {
-        return ($PathStr -ireplace [regex]::Escape($env:USERNAME), "<USER>")
+        $res = $res -ireplace [regex]::Escape($env:USERNAME), "<USER>"
     }
-    return $PathStr
+    return $res
+}
+
+function Write-JsonAtomic([string]$TargetPath, [object]$DataObj, [int]$Depth = 8) {
+    $outDir = Split-Path -Parent $TargetPath
+    if (-not [string]::IsNullOrWhiteSpace($outDir) -and -not (Test-Path $outDir)) {
+        New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+    }
+    $tmpPath = $TargetPath + ".tmp." + $PID + "." + ([guid]::NewGuid().ToString("N").Substring(0, 6))
+    $jsonText = $DataObj | ConvertTo-Json -Depth $Depth
+    [System.IO.File]::WriteAllText($tmpPath, $jsonText, (New-Object System.Text.UTF8Encoding($false)))
+    Move-Item -Path $tmpPath -Destination $TargetPath -Force
 }
 
 $installCandidates = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
@@ -130,7 +147,6 @@ foreach ($instDir in $installCandidates) {
         $executables += [ordered]@{
             name             = $ef.Name
             full_path        = Mask-UserPath $ef.FullName
-            raw_dir          = $instDir
             is_core_binary   = ($ef.Name -in $knownExeNames)
             file_version     = [string]$ef.VersionInfo.FileVersion
             product_version  = [string]$ef.VersionInfo.ProductVersion
@@ -145,62 +161,131 @@ foreach ($instDir in $installCandidates) {
     }
 }
 
-# 4. Running Processes & Child Processes
+# 4. Section 5.1: Multi-Factor Process Identity Verification
+# NEVER trust process name (e.g. axis.exe) alone! Must verify path, Authenticode signature, PID, start time, and parent-child relation.
 $runningProcesses = @()
-$kgiPidSet = New-Object System.Collections.Generic.HashSet[int]
+$unverifiedSameNameProcesses = @()
+$verifiedCorePidSet = New-Object System.Collections.Generic.HashSet[int]
+$verifiedChildPidSet = New-Object System.Collections.Generic.HashSet[int]
+
 try {
     $allProcs = Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue
+    $procByPid = @{}
     foreach ($p in $allProcs) {
+        $procByPid[[int]$p.ProcessId] = $p
+    }
+
+    foreach ($p in $allProcs) {
+        $pidInt = [int]$p.ProcessId
         $pPath = [string]$p.ExecutablePath
         $pName = [string]$p.Name
-        $matchedInstall = $false
+
+        $inKgiDir = $false
         foreach ($instDir in $installCandidates) {
             if (-not [string]::IsNullOrWhiteSpace($pPath) -and $pPath.StartsWith($instDir, [System.StringComparison]::OrdinalIgnoreCase)) {
-                $matchedInstall = $true
+                $inKgiDir = $true
                 break
             }
         }
-        if ($matchedInstall -or $pName -match '^(SUPERTSC64|SuperTSC|VELOTRDER64|TKAP3083)\.exe$') {
-            [void]$kgiPidSet.Add([int]$p.ProcessId)
+
+        $isCandidateName = ($pName -match '^(?i)(SUPERTSC64|SuperTSC|axis|VELOTRDER64|TKAP3083)\.exe$')
+        if (-not $inKgiDir -and -not $isCandidateName) { continue }
+
+        $sigValidKgi = $false
+        $sigSubj = ""
+        $sigState = "Unknown"
+        if (-not [string]::IsNullOrWhiteSpace($pPath) -and (Test-Path $pPath)) {
+            try {
+                $psig = Get-AuthenticodeSignature -FilePath $pPath -ErrorAction SilentlyContinue
+                if ($psig) {
+                    $sigState = [string]$psig.Status
+                    if ($psig.SignerCertificate) {
+                        $sigSubj = [string]$psig.SignerCertificate.Subject
+                    }
+                    if ($sigState -eq "Valid" -and ($sigSubj -match '(?i)(KGI Securities|Kway|SysJust)' -or $sigSubj -match $PatKgiName)) {
+                        $sigValidKgi = $true
+                    }
+                }
+            } catch {}
+        }
+
+        if ($inKgiDir -or $sigValidKgi) {
+            [void]$verifiedCorePidSet.Add($pidInt)
+        } else {
+            # Same-named binary (e.g. another vendor's axis.exe) rejected by multi-factor verification!
+            $unverifiedSameNameProcesses += [ordered]@{
+                pid              = $pidInt
+                name             = $pName
+                executable_path  = Mask-UserPath $pPath
+                signature_status = $sigState
+                signer_subject   = $sigSubj
+                rejection_reason = "Process name matched candidate, but neither install path nor KGI Authenticode signature matched"
+            }
         }
     }
 
-    # Include child processes (e.g. msedgewebview2.exe spawned by axis.exe)
+    # Include child processes spawned by verified KGI core processes
     $addedChild = $true
     while ($addedChild) {
         $addedChild = $false
         foreach ($p in $allProcs) {
             $pidInt = [int]$p.ProcessId
             $ppidInt = [int]$p.ParentProcessId
-            if (-not $kgiPidSet.Contains($pidInt) -and $kgiPidSet.Contains($ppidInt)) {
-                [void]$kgiPidSet.Add($pidInt)
-                $addedChild = $true
+            if (-not $verifiedCorePidSet.Contains($pidInt) -and -not $verifiedChildPidSet.Contains($pidInt)) {
+                if ($verifiedCorePidSet.Contains($ppidInt) -or $verifiedChildPidSet.Contains($ppidInt)) {
+                    [void]$verifiedChildPidSet.Add($pidInt)
+                    $addedChild = $true
+                }
             }
         }
     }
 
     foreach ($p in $allProcs) {
         $pidInt = [int]$p.ProcessId
-        if ($kgiPidSet.Contains($pidInt)) {
-            $startIso = ""
+        $isCore = $verifiedCorePidSet.Contains($pidInt)
+        $isChild = $verifiedChildPidSet.Contains($pidInt)
+        if (-not $isCore -and -not $isChild) { continue }
+
+        $startIso = ""
+        try {
+            $gp = Get-Process -Id $pidInt -ErrorAction SilentlyContinue
+            if ($gp -and $gp.StartTime) { $startIso = $gp.StartTime.ToString("o") }
+        } catch {}
+
+        $pPath = [string]$p.ExecutablePath
+        $sigState = "Unknown"
+        $sigSubj = ""
+        if (-not [string]::IsNullOrWhiteSpace($pPath) -and (Test-Path $pPath)) {
             try {
-                $gp = Get-Process -Id $pidInt -ErrorAction SilentlyContinue
-                if ($gp -and $gp.StartTime) { $startIso = $gp.StartTime.ToString("o") }
+                $psig = Get-AuthenticodeSignature -FilePath $pPath -ErrorAction SilentlyContinue
+                if ($psig) {
+                    $sigState = [string]$psig.Status
+                    if ($psig.SignerCertificate) { $sigSubj = [string]$psig.SignerCertificate.Subject }
+                }
             } catch {}
-            $runningProcesses += [ordered]@{
-                pid               = $pidInt
-                parent_pid        = [int]$p.ParentProcessId
-                name              = [string]$p.Name
-                executable_path   = Mask-UserPath ([string]$p.ExecutablePath)
-                start_time        = $startIso
-                is_webview_helper = ([string]$p.Name -match '(?i)webview')
-            }
+        }
+
+        $ppidInt = [int]$p.ParentProcessId
+        $parentName = if ($procByPid.ContainsKey($ppidInt)) { [string]$procByPid[$ppidInt].Name } else { "" }
+
+        $runningProcesses += [ordered]@{
+            pid                = $pidInt
+            parent_pid         = $ppidInt
+            parent_name        = $parentName
+            name               = [string]$p.Name
+            executable_path    = Mask-UserPath $pPath
+            start_time         = $startIso
+            signature_status   = $sigState
+            signer_subject     = $sigSubj
+            identity_role      = if ($isCore) { "verified_kgi_core" } else { "verified_child_helper" }
+            is_webview_helper  = ([string]$p.Name -match '(?i)webview')
         }
     }
 } catch {}
 
-# Static Config Endpoints Discovery (ONLY static package INI files: YELLOWPAGE.INI, LINK.INI, AXIS.INI, HTSWORK.INI; NEVER user files)
+# Static Config Endpoints Discovery (ONLY static package INI files: YELLOWPAGE.INI, AXIS.INI, PLATFORM.INI, HTSWORK.INI)
 $configuredEndpoints = @()
+$knownKgiIpSet = New-Object System.Collections.Generic.HashSet[string]
 $architectureFacts = [ordered]@{
     platform_engine       = ""
     socket_module         = ""
@@ -246,15 +331,20 @@ try {
             $resolvedIps = @()
             try {
                 $dnsRecs = Resolve-DnsName -Name $hm.fqdn -Type A -DnsOnly -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress }
-                foreach ($r in $dnsRecs) { $resolvedIps += [string]$r.IPAddress }
+                foreach ($r in $dnsRecs) {
+                    $ipStr = [string]$r.IPAddress
+                    $resolvedIps += $ipStr
+                    [void]$knownKgiIpSet.Add($ipStr)
+                }
             } catch {}
             $configuredEndpoints += [ordered]@{
-                role         = $hm.section
-                alias        = $hm.key
-                fqdn         = $hm.fqdn
-                ports        = $portsConfigured
-                resolved_ips = $resolvedIps
-                source       = "static_config:tab/YELLOWPAGE.INI"
+                endpoint_category = "static_ini_candidate"
+                role              = $hm.section
+                alias             = $hm.key
+                fqdn              = $hm.fqdn
+                ports             = $portsConfigured
+                resolved_ips      = $resolvedIps
+                source            = "static_config:tab/YELLOWPAGE.INI"
             }
         }
 
@@ -301,15 +391,14 @@ try {
         if (Test-Path $logsDir) {
             $latestLog = Get-ChildItem -Path $logsDir -File -Recurse -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
             if ($latestLog) {
-                # Extract PID hint from filename pattern HTSyyyyMMdd-HHmm-PID.log
                 $logPidHint = $null
                 if ($latestLog.Name -match '-(\d+)\.log$') {
                     $logPidHint = [int]$Matches[1]
                 }
                 $architectureFacts.last_log_metadata = [ordered]@{
-                    file_name       = $latestLog.Name
+                    file_name       = "HTS_REDACTED.log"
                     size_bytes      = [int64]$latestLog.Length
-                    last_write_time = $latestLog.LastWriteTime.ToString("o")
+                    last_write_date = $latestLog.LastWriteTime.ToString("yyyy-MM-dd")
                     pid_in_filename = $logPidHint
                     content_policy  = "Encrypted vendor log; metadata inspected only (no decryption/credential access)"
                 }
@@ -324,9 +413,12 @@ try {
     }
 } catch {}
 
-# 5, 6, 7. Active TCP Connections for KGI Processes + Reverse Hostname Mapping
+# 5, 6, 7. Active TCP Connections separated into observed_active_endpoints vs unverified_remote_endpoints
 $activeConnections = @()
-if ($kgiPidSet.Count -gt 0) {
+$observedActiveEndpoints = @()
+$unverifiedRemoteEndpoints = @()
+
+if ($verifiedCorePidSet.Count -gt 0 -or $verifiedChildPidSet.Count -gt 0) {
     $dnsCacheMap = @{}
     try {
         $cacheEntries = Get-DnsClientCache -ErrorAction SilentlyContinue
@@ -345,12 +437,14 @@ if ($kgiPidSet.Count -gt 0) {
 
     try {
         $conns = Get-NetTCPConnection -ErrorAction SilentlyContinue | Where-Object {
-            $kgiPidSet.Contains([int]$_.OwningProcess)
+            $verifiedCorePidSet.Contains([int]$_.OwningProcess) -or $verifiedChildPidSet.Contains([int]$_.OwningProcess)
         }
         foreach ($c in $conns) {
             $remAddr = [string]$c.RemoteAddress
             if ($remAddr -in @("0.0.0.0", "::", "127.0.0.1", "::1")) { continue }
 
+            $ownerPid = [int]$c.OwningProcess
+            $isCoreOwner = $verifiedCorePidSet.Contains($ownerPid)
             $hostHint = ""
             if ($dnsCacheMap.ContainsKey($remAddr)) {
                 $hostHint = $dnsCacheMap[$remAddr]
@@ -361,15 +455,29 @@ if ($kgiPidSet.Count -gt 0) {
                 } catch {}
             }
 
-            $procObj = $runningProcesses | Where-Object { $_.pid -eq [int]$c.OwningProcess } | Select-Object -First 1
-            $activeConnections += [ordered]@{
-                pid            = [int]$c.OwningProcess
-                process_name   = if ($procObj) { $procObj.name } else { "" }
-                local_port     = [int]$c.LocalPort
-                remote_address = $remAddr
-                remote_port    = [int]$c.RemotePort
-                state          = [string]$c.State
-                verified_fqdn  = $hostHint
+            $isKnownKgiEndpoint = (
+                $knownKgiIpSet.Contains($remAddr) -or
+                ($hostHint -match '(?i)(kgi\.com\.tw|kgieworld\.com\.tw|kgif\.com\.tw)')
+            )
+            $epCategory = if ($isCoreOwner -or $isKnownKgiEndpoint) { "observed_active" } else { "unverified_remote" }
+
+            $procObj = $runningProcesses | Where-Object { $_.pid -eq $ownerPid } | Select-Object -First 1
+            $connEntry = [ordered]@{
+                endpoint_category = $epCategory
+                pid               = $ownerPid
+                process_name      = if ($procObj) { $procObj.name } else { "" }
+                identity_role     = if ($procObj) { $procObj.identity_role } else { "" }
+                local_port        = [int]$c.LocalPort
+                remote_address    = $remAddr
+                remote_port       = [int]$c.RemotePort
+                state             = [string]$c.State
+                verified_fqdn     = $hostHint
+            }
+            $activeConnections += $connEntry
+            if ($epCategory -eq "observed_active") {
+                $observedActiveEndpoints += $connEntry
+            } else {
+                $unverifiedRemoteEndpoints += $connEntry
             }
         }
     } catch {}
@@ -379,27 +487,30 @@ $installRootList = @()
 foreach ($d in $installCandidates) { $installRootList += (Mask-UserPath $d) }
 
 $outputObj = [ordered]@{
-    schema_version         = "1.0"
-    inspected_at           = (Get-Date).ToString("o")
-    is_installed           = ($installRootList.Count -gt 0)
-    is_currently_running   = ($runningProcesses.Count -gt 0)
-    install_directories    = $installRootList
-    registry_entries       = $registryEntries
-    shortcuts              = $shortcutEntries
-    executables            = $executables
-    running_processes      = $runningProcesses
-    active_tcp_connections = $activeConnections
-    configured_endpoints   = $configuredEndpoints
-    architecture_and_reconnect = $architectureFacts
+    schema_version                = "2.0"
+    run_id                        = $RunId
+    run_status                    = "SUCCESS"
+    inspected_at                  = (Get-Date).ToString("o")
+    is_installed                  = ($installRootList.Count -gt 0)
+    is_currently_running          = ($verifiedCorePidSet.Count -gt 0)
+    install_directories           = $installRootList
+    registry_entries              = $registryEntries
+    shortcuts                     = $shortcutEntries
+    executables                   = $executables
+    running_processes             = $runningProcesses
+    rejected_same_name_processes  = $unverifiedSameNameProcesses
+    active_tcp_connections        = $activeConnections
+    observed_active_endpoints     = $observedActiveEndpoints
+    configured_endpoints          = $configuredEndpoints
+    unverified_remote_endpoints   = $unverifiedRemoteEndpoints
+    architecture_and_reconnect    = $architectureFacts
 }
 
-$outDir = Split-Path -Parent $OutputPath
-if (-not [string]::IsNullOrWhiteSpace($outDir) -and -not (Test-Path $outDir)) {
-    New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+try {
+    Write-JsonAtomic -TargetPath $OutputPath -DataObj $outputObj -Depth 8
+    Write-Output ("OK: KGI inspection saved to " + $OutputPath + " (RunId=" + $RunId + ")")
+    exit 0
+} catch {
+    Write-Error ("FAILED: Unable to write KGI inspection JSON: " + $_.Exception.Message)
+    exit 2
 }
-
-$jsonText = $outputObj | ConvertTo-Json -Depth 8
-[System.IO.File]::WriteAllText($OutputPath, $jsonText, (New-Object System.Text.UTF8Encoding($false)))
-
-Write-Output ("OK: KGI inspection saved to " + $OutputPath)
-

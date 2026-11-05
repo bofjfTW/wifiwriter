@@ -1,13 +1,42 @@
-# Python bytecode & caches
+# Python bytecode & test caches
 __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
+.coverage
+htmlcov/
 
-# Local custom config overrides & transient runtime flags
+# Local diagnostic outputs, raw monitoring logs, internal & sanitized run data
+# Only keep directory placeholder in Git; NEVER auto-track user diagnostic data
+reports/*
+!reports/.gitkeep
+network_environment.json
+network_environment.md
+
+# User-specific targets, local overrides, environment variables & secrets
 config/targets.json
-reports/monitor_stop.flag
-reports/monitor_state.json
+config/*.local.json
+config/*.user.json
+.env
+.env.*
+*.pfx
+*.p12
+*.cer
+*.crt
+*.key
+*.pem
+*.kdbx
+
+# Raw logs, packet captures, crash dumps & transient runtime flags
+*.log
+*.jsonl
+*.pcap
+*.pcapng
+*.etl
+*.dmp
+*.tmp
+*.bak
+*.flag
 
 # OS / Editor metadata
 Thumbs.db

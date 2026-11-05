@@ -1,140 +1,135 @@
-# 壓力測試（Campus Network Diagnostic）— 校園網路與凱基證券「新超級大三元」連線診斷系統
+# wifiwriter v0.2 — 校園網路與凱基證券「新超級大三元」高可信度連線診斷系統
 
-本專案是一套專為 **Windows 10/11 大學校園網路環境**設計的**唯讀、低負載、非侵入式網路診斷與證據蒐集工具**。
+本專案是一套專為 **Windows 10 / 11 大學校園網路環境**設計的**唯讀、低負載、非侵入式連線診斷與科學 A/B 對照系統**。
 
-主要任務為找出**凱基證券「新超級大三元」交易軟體（`SUPERTSC64.exe` / `axis.exe`）在學校網路環境經常斷線、連線中斷或重新連線的真正原因**，透過自動化環境辨識、公開對照檢查、實際端點協定檢測、30 秒週期斷線監控及「學校網路 vs 手機熱點」A/B 對照實驗，產出嚴謹可重現的技術報告。
+核心目標為：**精確判斷凱基證券「新超級大三元」交易軟體在校園網路的真實斷線事件，並將斷線時間點與本機程序、TCP Socket 生滅、DNS/TCP 探測及 Windows 網路事件建立可追溯關聯，而非僅測試伺服器 TCP Port 是否可連通。**
 
-> **安全與合規聲明：**
-> - 本工具**絕不**掃描校園網段、不執行大規模 Port Scan、不發送高負載/洪泛流量、不繞過任何校園認證或防火牆政策。
-> - **絕不**修改本機防火牆、DNS、Proxy、路由或 Windows Defender 設定（純唯讀檢查）。
-> - **絕不**讀取、解密或擷取任何金融交易帳密、憑證、Session Token 或委託內容。
-> - 對本機 IP、主機名稱、使用者帳號、MAC/BSSID 自動進行隱私遮罩，且所有報告 100% 儲存在本機，不上傳任何外部伺服器。
+> **安全、隱私與合規邊界：**
+> - **零侵入性：** 絕不掃描校園網段、不執行未授權 Port Scan、不發送高頻率或洪泛流量、不繞過校園網路政策、不修改防火牆/DNS/Proxy/網卡設定。
+> - **零金融敏感存取：** 絕不讀取、解密或擷取交易帳密、憑證、Cookie、Session Token、畫面報價或委託內容；絕不自動登入或下單。
+> - **內外資料嚴格分離與防洩漏：** 內部完整診斷產物存於 `reports/internal/<run_id>/`，對外去識別化遮罩版存於 `reports/sanitized/<run_id>/`；兩者皆由 `.gitignore` 與 `src/privacy.py` 雙重攔截，嚴禁自動上傳至公開 GitHub。
 
 ---
 
 ## 專案目錄結構
 
 ```text
-壓力測試/
-├── README.md                       # 專案總覽與完整使用教學（本檔案）
-├── requirements.txt                # 依賴說明（核心 100% 使用標準庫，免安裝第三方套件）
-├── network_environment.json        # 第一階段：本機網路環境辨識結果 (JSON)
-├── network_environment.md          # 第一階段：本機網路環境辨識報告 (Markdown)
+wifiwriter/
+├── .github/workflows/ci.yml        # GitHub Actions 離線單元測試與隱私掃描工作流程
+├── AGENTS.md                       # 分支開發與 Git 提交隱私安全規範 (禁止自動推 main)
+├── README.md                       # 專案總覽與 Windows 實戰操作教學
+├── requirements.txt                # Python >= 3.10 標準函式庫說明（零第三方套件依賴）
 ├── config/
-│   └── targets.example.json        # 白名單網站、本機程式與授權 HEAD 下載檢測設定範本
+│   └── targets.example.json        # 經審查之公開白名單網站、應用程式與 HEAD 下載設定範本
 ├── scripts/
-│   ├── collect_network.ps1         # 唯讀蒐集 Windows 網路介面、路由、防火牆、Proxy 與事件
-│   ├── inspect_kgi.ps1             # 自動探索新超級大三元執行檔、數位簽章、PID 與實際連線端點
-│   ├── check_restrictions.ps1      # 網站、應用程式與低負載 HEAD 檔案下載限制檢查
-│   └── monitor_connections.ps1     # 每 30 秒低負載連線監控（支援背景啟動、查詢與安全停止）
+│   ├── collect_network.ps1         # 唯讀蒐集 Windows 網路介面、路由、防火牆、Proxy 與系統事件
+│   ├── check_restrictions.ps1      # 公開白名單網站、指定程式與低負載 HEAD 下載檢查
+│   ├── inspect_kgi.ps1             # 多因子驗證凱基程序身分與三類遠端端點分級
+│   ├── monitor_connections.ps1     # 雙頻率監控（5 秒被動 Socket 追蹤 + 30 秒主動探測）與生命週期保護
+│   └── sync_github.ps1             # 白名單路徑暫存 + 敏感資訊掃描同步工具（禁止 git add -A 與直推 main）
 ├── src/
-│   ├── __init__.py
-│   ├── diagnostics.py              # CLI 主程式、安全權限檢查、操作日誌與協定探測整合
-│   ├── analyzer.py                 # 隱私遮罩、五級限制證據分類、A~G 根因決策與 A/B 比較引擎
-│   └── report_generator.py         # 輸出 Markdown、JSON、CSV 及離線 HTML 視覺化報告
+│   ├── diagnostics.py              # CLI 主程式（env / check / kgi / monitor / mark / compare / report / simulate / all）
+│   ├── analyzer.py                 # 八大事件分類、TLS 細分、真實 Socket 時長、科學 A/B 檢核與三層證據分級
+│   ├── privacy.py                  # 敏感資訊掃描器與內外分享資料深層去識別化模組
+│   └── report_generator.py         # Markdown / JSON / CSV / 離線安全 HTML 報告產生器（含事件時間線）
 ├── tests/
-│   └── test_diagnostics.py         # 單元測試套件（遮罩、分類邏輯、根因規則、報告輸出）
-├── reports/
-│   ├── diagnostic_report.md        # 完整研究報告 (Markdown)
-│   ├── diagnostic_report.html      # 離線視覺化診斷儀表板 (HTML)
-│   ├── diagnostic_report.json      # 完整結構化證據包 (JSON)
-│   ├── diagnostic_summary.csv      # 網站、程式、下載與凱基端點總表 (CSV, Excel 相容)
-│   ├── ab_comparison.csv           # 學校網路 vs 手機熱點八大指標對照表 (CSV)
-│   └── operations.log              # 經遮罩之操作稽核日誌
-└── docs/
-    ├── methodology.md              # 診斷方法論、協定機轉與科學舉證規範
-    └── troubleshooting.md          # 故障排除 SOP、A/B 實驗流程與學校網管申請範本
+│   ├── test_diagnostics.py         # 17 項離線單元測試與 PowerShell 生命週期整合測試
+│   └── fixtures/                   # RFC 5737 合成測試資料（零真實個人或金融端點）
+├── docs/
+│   ├── methodology.md              # v0.2 科學取證方法論、事件分類與證據分級規範
+│   ├── troubleshooting.md          # Windows 實機操作 SOP、手動標記與 A/B 30 分鐘實驗手冊
+│   └── v0.2_validation_report.md   # v0.2 修正驗證報告與 Git 歷史隱私風險評估
+└── reports/
+    └── .gitkeep                    # 本機輸出目錄（internal/ 與 sanitized/ 均已排除版控）
 ```
 
 ---
 
 ## 環境需求
 
-- **作業系統：** Windows 10 / Windows 11（內建 PowerShell 5.1）
-- **Python：** Python 3.10 以上（實測 Python 3.12，完全使用內建標準函式庫，無須 `pip install` 任何外部套件）
-- **執行權限：** 一般使用者權限即可執行全部檢查（不需管理員提權）
+- **作業系統：** Windows 10 / Windows 11（內建 Windows PowerShell 5.1）
+- **Python：** Python 3.10 以上（100% 使用內建標準函式庫，無須 `pip install` 外部套件）
+- **執行權限：** 一般使用者權限即可執行全部唯讀檢查與監控（如需管理員權限或封包擷取，須另行評估並取得使用者同意，本工具預設不啟用）
 
 ---
 
-## CLI 快速使用教學
+## Windows 實際操作教學（CLI 完整指令）
 
-請在專案根目錄（`壓力測試/`）開啟 PowerShell 或終端機執行：
+請在專案根目錄開啟 PowerShell 執行：
 
-### 0. 一鍵執行完整安全唯讀基準診斷（推薦首次執行）
+### 1. 執行可重現的離線模擬斷線驗收測試（免開交易軟體、零真實金融連線）
+
+```powershell
+python src/diagnostics.py simulate
+```
+
+一次驗證兩大關鍵行為：
+1. **凱基未啟動 + 主動探測失敗** → 輸出 `KGI_PROBE_FAILURE`（`探測失敗，尚無交易程式斷線證據`），`confirmed_trading_disconnect_count = 0`。
+2. **凱基執行中斷線 + 手動標記** → 自動關聯前後程序身分、Socket 歸零、主動探測與 Windows 系統事件。
+
+### 2. 一鍵執行本機唯讀基準診斷
 
 ```powershell
 python src/diagnostics.py all
 ```
 
-自動依序完成：網路環境辨識 -> 網站/程式/下載限制檢查 -> 凱基「新超級大三元」端點與協定深度檢測 -> 輸出 Markdown / JSON / CSV / HTML 完整報告。
+自動共享單一 `Run ID` 依序完成 `env` → `check` → `kgi` → `report`（任一步驟子程序非零結束碼即中止並寫入安全 `error_summary.json`，絕不載入舊報告偽裝成功）。
+- 內部完整報告：`reports/internal/<run_id>/diagnostic_report.{md,html,json}`
+- 對外分享遮罩版：`reports/sanitized/<run_id>/diagnostic_report.{md,html,json}`
 
-### 1. 單獨一鍵蒐集電腦網路環境
+### 3. 開啟「新超級大三元」執行雙頻率即時監控與手動斷線標記
 
-```powershell
-python src/diagnostics.py env
-```
+1. 先關閉手機上的同帳號看盤 App（避免跨裝置互踢），手動開啟並登入電腦版「新超級大三元」停留在一般看盤畫面。
+2. 啟動校園網路 30 分鐘背景監控（**被動每 5 秒**觀察驗證通過之凱基程序與 TCP Socket 生滅；**主動每 30 秒**執行低負載 DNS/TCP 探測）：
+   ```powershell
+   python src/diagnostics.py monitor start --label campus --passive-interval 5 --active-interval 30 --duration 1800
+   ```
+3. **當您親眼看到軟體畫面跳出斷線或行情停止更新時**，立即執行手動標記：
+   ```powershell
+   python src/diagnostics.py mark --event kgi-disconnected --note "盤中報價中斷"
+   ```
+   當軟體重連恢復時，標記恢復時間：
+   ```powershell
+   python src/diagnostics.py mark --event kgi-reconnected --note "自動重連恢復"
+   ```
+4. 隨時查詢背景監控健康狀態（會同時驗證 PID 與程序建立時間，自動偵測背景異常結束）：
+   ```powershell
+   python src/diagnostics.py monitor status
+   ```
+5. 滿 30 分鐘自動結束，或手動優雅停止並原子寫入完整統計與事件時間線：
+   ```powershell
+   python src/diagnostics.py monitor stop
+   ```
 
-輸出 `network_environment.json` 與 `network_environment.md`（同步存於根目錄與 `reports/`）。
-
-### 2. 檢查指定網站、本機程式與官方端點下載限制
-
-```powershell
-# 使用預設白名單 config/targets.example.json
-python src/diagnostics.py check
-
-# 若需自訂測試目標，可複製 config/targets.example.json 為 config/targets.json 修改後執行：
-python src/diagnostics.py check --targets config/targets.json
-```
-
-### 3. 深度檢測凱基「新超級大三元」與開始/停止斷線監控
-
-```powershell
-# 3a. 單次深度檢查凱基安裝檔、簽章、程序與伺服器端點協定
-python src/diagnostics.py kgi
-
-# 3b. 開始每 30 秒低負載背景監控（請先手動開啟新超級大三元）
-# 學校網路測試（測試 A，預設監控 1800 秒 = 30 分鐘）：
-python src/diagnostics.py monitor start --label campus --interval 30 --duration 1800
-
-# 查詢目前背景監控狀態與已記錄樣本數：
-python src/diagnostics.py monitor status
-
-# 手動提前安全停止監控並結算統計：
-python src/diagnostics.py monitor stop
-```
-
-### 4. 進行手機熱點對照實驗並匯入比較
+### 4. 切換個人手機熱點執行對照實驗（測試 B）並進行科學比較
 
 ```powershell
-# 切換至個人手機熱點後，手動開啟新超級大三元並執行測試 B：
-python src/diagnostics.py monitor start --label hotspot --interval 30 --duration 1800
+# 切換至個人手機熱點並重新登入新超級大三元後，以相同設定執行 30 分鐘監控：
+python src/diagnostics.py monitor start --label hotspot --passive-interval 5 --active-interval 30 --duration 1800
 
-# 測試完成後（或手動 monitor stop 後），一鍵匯入雙環境結果產生對照報告：
+# 雙環境皆完成後，執行 7 項科學可比性前置檢核與每小時標準化斷線率比較：
 python src/diagnostics.py compare
 
-# 亦可指定特定歷史監控 JSON 檔案進行匯入比較：
-python src/diagnostics.py compare --campus reports/monitor_campus_latest.json --hotspot reports/monitor_hotspot_latest.json
-```
-
-### 5. 重新產生所有格式報告（Markdown / JSON / CSV / HTML）
-
-```powershell
+# 產生最新整合研究報告（含 10 欄位事件時間線與 7 大核心問題實證回答）：
 python src/diagnostics.py report
 ```
 
 ---
 
-## 執行單元測試
+## 執行自動化測試與隱私檢查
 
 ```powershell
+# 執行全部離線單元測試與 Windows PowerShell 監控生命週期整合測試
 python -m unittest discover -s tests -v
+
+# 掃描工作區已追蹤檔案是否符合 Git 白名單與零敏感資訊規範
+python -m src.privacy
 ```
 
 ---
 
 ## 延伸閱讀
 
-- 診斷設計邏輯與 NGFW 非標準協定分析：[docs/methodology.md](./docs/methodology.md)
-- A/B 對照操作步驟與計中申請信範本：[docs/troubleshooting.md](./docs/troubleshooting.md)
-- 最新完整研究報告：[reports/diagnostic_report.md](./reports/diagnostic_report.md)
-
+- 科學診斷方法論與事件分類定義：[docs/methodology.md](./docs/methodology.md)
+- Windows 實機排查與 A/B 實驗操作手冊：[docs/troubleshooting.md](./docs/troubleshooting.md)
+- v0.2 驗證報告與 Git 歷史隱私風險評估：[docs/v0.2_validation_report.md](./docs/v0.2_validation_report.md)
