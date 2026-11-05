@@ -1,0 +1,282 @@
+{
+    "schema_version":  "1.0",
+    "collected_at":  "2026-11-05T22:17:22.7067060+08:00",
+    "mode":  "read_only_local_inspection",
+    "os_and_system":  {
+                          "caption":  "Microsoft Windows 10 專業版",
+                          "version":  "10.0.19045",
+                          "display_version":  "22H2",
+                          "build_number":  "19045",
+                          "ubr":  6466,
+                          "architecture":  "64 位元",
+                          "last_boot_time":  "2026-10-29T01:48:43.5033200+08:00",
+                          "masked_hostname":  "DES***AE",
+                          "masked_username":  "w***l",
+                          "is_elevated":  false,
+                          "active_power_plan":  "電源配置 GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c  (高效能)"
+                      },
+    "primary_connection":  {
+                               "connection_type":  "Ethernet",
+                               "interface_alias":  "乙太網路",
+                               "interface_index":  5,
+                               "environment_hint":  "Campus_TANet_Or_Enterprise_Network"
+                           },
+    "active_ip_configurations":  [
+                                     {
+                                         "interface_alias":  "vEthernet (WSL)",
+                                         "interface_index":  26,
+                                         "interface_description":  "Hyper-V Virtual Ethernet Adapter",
+                                         "connection_medium":  "Ethernet",
+                                         "net_profile_category":  "Unknown",
+                                         "ipv4_addresses":  [
+                                                                {
+                                                                    "ip_masked":  "172.30.xxx.xxx",
+                                                                    "ip_class":  "Private_RFC1918_ClassB",
+                                                                    "prefix_length":  20,
+                                                                    "subnet_mask":  "255.255.240.0"
+                                                                }
+                                                            ],
+                                         "ipv6_address_count":  0,
+                                         "ipv4_gateways":  [
+
+                                                           ],
+                                         "dns_servers":  [
+                                                             {
+                                                                 "address_masked":  "fec0:0:xxxx:xxxx::xxxx",
+                                                                 "address_class":  "Public_IPv4",
+                                                                 "is_public_well_known":  false,
+                                                                 "address_family":  "23"
+                                                             },
+                                                             {
+                                                                 "address_masked":  "fec0:0:xxxx:xxxx::xxxx",
+                                                                 "address_class":  "Public_IPv4",
+                                                                 "is_public_well_known":  false,
+                                                                 "address_family":  "23"
+                                                             },
+                                                             {
+                                                                 "address_masked":  "fec0:0:xxxx:xxxx::xxxx",
+                                                                 "address_class":  "Public_IPv4",
+                                                                 "is_public_well_known":  false,
+                                                                 "address_family":  "23"
+                                                             }
+                                                         ]
+                                     },
+                                     {
+                                         "interface_alias":  "乙太網路",
+                                         "interface_index":  5,
+                                         "interface_description":  "Intel(R) Ethernet Connection (7) I219-V",
+                                         "connection_medium":  "Ethernet",
+                                         "net_profile_category":  "Public",
+                                         "ipv4_addresses":  [
+                                                                {
+                                                                    "ip_masked":  "163.13.xxx.xxx",
+                                                                    "ip_class":  "TANet_Taiwan_Academic_IPv4",
+                                                                    "prefix_length":  24,
+                                                                    "subnet_mask":  "255.255.255.0"
+                                                                }
+                                                            ],
+                                         "ipv6_address_count":  0,
+                                         "ipv4_gateways":  [
+                                                               {
+                                                                   "next_hop_masked":  "163.13.xxx.xxx",
+                                                                   "next_hop_class":  "TANet_Taiwan_Academic_IPv4",
+                                                                   "route_metric":  256
+                                                               }
+                                                           ],
+                                         "dns_servers":  [
+                                                             {
+                                                                 "address_masked":  "163.13.xxx.xxx",
+                                                                 "address_class":  "TANet_Taiwan_Academic_IPv4",
+                                                                 "is_public_well_known":  false,
+                                                                 "address_family":  "2"
+                                                             },
+                                                             {
+                                                                 "address_masked":  "8.8.4.4",
+                                                                 "address_class":  "Public_WellKnown_DNS",
+                                                                 "is_public_well_known":  true,
+                                                                 "address_family":  "2"
+                                                             }
+                                                         ]
+                                     }
+                                 ],
+    "dns_servers":  [
+                        {
+                            "interface_alias":  "vEthernet (WSL)",
+                            "address_masked":  "fec0:0:xxxx:xxxx::xxxx",
+                            "address_class":  "Public_IPv4",
+                            "is_public_well_known":  false
+                        },
+                        {
+                            "interface_alias":  "vEthernet (WSL)",
+                            "address_masked":  "fec0:0:xxxx:xxxx::xxxx",
+                            "address_class":  "Public_IPv4",
+                            "is_public_well_known":  false
+                        },
+                        {
+                            "interface_alias":  "vEthernet (WSL)",
+                            "address_masked":  "fec0:0:xxxx:xxxx::xxxx",
+                            "address_class":  "Public_IPv4",
+                            "is_public_well_known":  false
+                        },
+                        {
+                            "interface_alias":  "乙太網路",
+                            "address_masked":  "163.13.xxx.xxx",
+                            "address_class":  "TANet_Taiwan_Academic_IPv4",
+                            "is_public_well_known":  false
+                        },
+                        {
+                            "interface_alias":  "乙太網路",
+                            "address_masked":  "8.8.4.4",
+                            "address_class":  "Public_WellKnown_DNS",
+                            "is_public_well_known":  true
+                        }
+                    ],
+    "network_adapters":  [
+                             {
+                                 "name":  "vEthernet (WSL)",
+                                 "interface_index":  26,
+                                 "description":  "Hyper-V Virtual Ethernet Adapter",
+                                 "status":  "Up",
+                                 "link_speed":  "10 Gbps",
+                                 "media_type":  "802.3",
+                                 "physical_media_type":  "Unspecified",
+                                 "driver_version":  "10.0.19041.1",
+                                 "driver_date":  "2006-06-21",
+                                 "mac_address_masked":  "00-15-5D-xx-xx-xx",
+                                 "is_virtual":  true,
+                                 "power_management":  null
+                             },
+                             {
+                                 "name":  "乙太網路",
+                                 "interface_index":  5,
+                                 "description":  "Intel(R) Ethernet Connection (7) I219-V",
+                                 "status":  "Up",
+                                 "link_speed":  "1 Gbps",
+                                 "media_type":  "802.3",
+                                 "physical_media_type":  "802.3",
+                                 "driver_version":  "12.18.9.11",
+                                 "driver_date":  "2019-09-05",
+                                 "mac_address_masked":  "E0-D5-5E-xx-xx-xx",
+                                 "is_virtual":  false,
+                                 "power_management":  null
+                             }
+                         ],
+    "windows_firewall":  {
+                             "profiles":  [
+                                              {
+                                                  "name":  "Domain",
+                                                  "enabled":  true,
+                                                  "default_inbound_action":  "NotConfigured",
+                                                  "default_outbound_action":  "NotConfigured"
+                                              },
+                                              {
+                                                  "name":  "Private",
+                                                  "enabled":  true,
+                                                  "default_inbound_action":  "NotConfigured",
+                                                  "default_outbound_action":  "NotConfigured"
+                                              },
+                                              {
+                                                  "name":  "Public",
+                                                  "enabled":  true,
+                                                  "default_inbound_action":  "NotConfigured",
+                                                  "default_outbound_action":  "NotConfigured"
+                                              }
+                                          ],
+                             "outbound_block_count":  3,
+                             "kgi_related_rules":  [
+
+                                                   ]
+                         },
+    "proxy_settings":  {
+                           "wininet_proxy_enabled":  false,
+                           "wininet_proxy_server":  "",
+                           "wininet_pac_url":  "",
+                           "wininet_auto_detect":  false,
+                           "winhttp_raw":  "Current WinHTTP proxy settings:      Direct access (no proxy server).",
+                           "winhttp_direct_access":  true,
+                           "env_proxies":  {
+
+                                           }
+                       },
+    "routing":  {
+                    "default_routes":  [
+                                           {
+                                               "interface_alias":  "乙太網路",
+                                               "interface_index":  5,
+                                               "destination":  "0.0.0.0/0",
+                                               "next_hop_masked":  "163.13.xxx.xxx",
+                                               "route_metric":  256,
+                                               "interface_metric":  25
+                                           }
+                                       ],
+                    "target_route_checks":  [
+                                                {
+                                                    "label":  "Public_DNS_8.8.8.8",
+                                                    "target_host":  "8.8.8.8",
+                                                    "resolved_ip":  "8.8.8.8",
+                                                    "interface_alias":  "乙太網路",
+                                                    "next_hop_masked":  "163.13.xxx.xxx",
+                                                    "local_ip_masked":  "163.13.xxx.xxx"
+                                                },
+                                                {
+                                                    "label":  "KGI_Quote_gtsquot.kgieworld.com.tw",
+                                                    "target_host":  "gtsquot.kgieworld.com.tw",
+                                                    "resolved_ip":  "210.61.188.54",
+                                                    "interface_alias":  "乙太網路",
+                                                    "next_hop_masked":  "163.13.xxx.xxx",
+                                                    "local_ip_masked":  "163.13.xxx.xxx"
+                                                },
+                                                {
+                                                    "label":  "KGI_Trade_gtstrade.kgieworld.com.tw",
+                                                    "target_host":  "gtstrade.kgieworld.com.tw",
+                                                    "resolved_ip":  "210.61.188.55",
+                                                    "interface_alias":  "乙太網路",
+                                                    "next_hop_masked":  "163.13.xxx.xxx",
+                                                    "local_ip_masked":  "163.13.xxx.xxx"
+                                                }
+                                            ]
+                },
+    "wifi_diagnostics":  {
+                             "applicable":  false,
+                             "connected":  false,
+                             "details":  {
+
+                                         }
+                         },
+    "recent_network_events":  {
+                                  "lookback_hours":  24,
+                                  "wlan_events":  [
+
+                                                  ],
+                                  "network_profile_events":  [
+
+                                                             ],
+                                  "dns_client_timeouts":  [
+
+                                                          ],
+                                  "power_sleep_events":  [
+
+                                                         ]
+                              },
+    "vpn_auth_and_security":  {
+                                  "configured_vpn_profiles":  [
+
+                                                              ],
+                                  "virtual_vpn_adapters":  [
+
+                                                           ],
+                                  "running_vpn_or_proxy_processes":  [
+
+                                                                     ],
+                                  "wired_8021x_service_running":  false,
+                                  "ncsi_active_probing_enabled":  true,
+                                  "security_products":  [
+                                                            {
+                                                                "type":  "AntiVirus",
+                                                                "display_name":  "Windows Defender",
+                                                                "product_state":  397568
+                                                            }
+                                                        ],
+                                  "environment_inference":  "Campus_TANet_Or_Enterprise_Network"
+                              }
+}

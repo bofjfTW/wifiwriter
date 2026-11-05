@@ -1,0 +1,19 @@
+﻿檢查類型,目標名稱,端點或路徑,DNS/安裝狀態,TCP/執行狀態,HTTP或協定細節,延遲(ms),診斷分類,證據說明
+網站連線,凱基證券官方網站,https://www.kgi.com.tw/,成功,3/3,HTTP 302 / TLS=True,13.38,正常,DNS、TCP、TLS 憑證鏈與 HTTP 回應（302）皆正常
+網站連線,凱基期貨－新超級大三元官方頁面,https://www.kgif.com.tw/zh-tw/individual-trading-platform-super,成功,3/3,HTTP 200 / TLS=True,6.51,正常,DNS、TCP、TLS 憑證鏈與 HTTP 回應（200）皆正常
+網站連線,凱基全球理財網 (HTS 公告與資訊端點),https://www.kgieworld.com.tw/,成功,3/3,HTTP 200 / TLS=True,5.2,正常,DNS、TCP、TLS 憑證鏈與 HTTP 回應（200）皆正常
+網站連線,Microsoft 官方網站,https://www.microsoft.com/,成功,3/3,HTTP 200 / TLS=True,4.94,正常,DNS、TCP、TLS 憑證鏈與 HTTP 回應（200）皆正常
+網站連線,GitHub 官方網站,https://github.com/,成功,3/3,HTTP 200 / TLS=True,35.22,正常,DNS、TCP、TLS 憑證鏈與 HTTP 回應（200）皆正常
+本機應用程式,凱基證券 新超級大三元 (啟動器 SUPERTSC64),D:\超級大三元\exe\SUPERTSC64.exe,已安裝(v2.0.0),未啟動,"簽章=Valid, FW封鎖=0",,證據不足,程式已安裝且簽章已檢查，但目前未啟動執行；依診斷規範不得將未啟動程式判定為受到限制
+本機應用程式,凱基證券 新超級大三元 (HTS 主連線核心 axis.exe),D:\超級大三元\exe\axis.exe,已安裝(v3.0.0.1),未啟動,"簽章=Valid, FW封鎖=0",,證據不足,程式已安裝且簽章已檢查，但目前未啟動執行；依診斷規範不得將未啟動程式判定為受到限制
+檔案下載(HEAD),凱基官方憑證元件端點 (.exe 檔案限制檢測),https://event.kgi.com.tw/uploadfiles/euploadfile/KGI_CA.exe,主站 HTTP 200,端點 HTTP 200,"型態=.exe, Method=HEAD",27.34,正常,官方端點對 .exe 之 HEAD 請求正常回應（HTTP 200），無檔案型態封鎖跡象
+檔案下載(HEAD),凱基新超級大三元產品頁 HEAD 檢測,https://www.kgif.com.tw/zh-tw/individual-trading-platform-super,主站 HTTP 302,端點 HTTP 200,"型態=html, Method=HEAD",137.83,正常,官方端點對 html 之 HEAD 請求正常回應（HTTP 200），無檔案型態封鎖跡象
+檔案下載(HEAD),GitHub 純文字端點 HEAD 檢測,https://github.com/robots.txt,主站 HTTP 200,端點 HTTP 200,"型態=.txt, Method=HEAD",36.32,正常,官方端點對 .txt 之 HEAD 請求正常回應（HTTP 200），無檔案型態封鎖跡象
+凱基交易/行情端點,SecServer_URL,gtstrade.kgieworld.com.tw:80 (210.61.188.55),成功,3/3,HTS 備援通訊埠 (TCP 80 長連線),20.27,正常,TCP 80 三方交握成功（供新超級大三元專屬封包通訊使用）
+凱基交易/行情端點,SecServer_URL,gtstrade.kgieworld.com.tw:443 (210.61.188.55),成功,3/3,非標準 TLS（HTS 專屬封包協定 over TCP 443）,24.31,正常,TCP 443 三方交握迅速成功，但伺服器不回應標準 TLS ClientHello（等待專屬 HTS 封包）
+凱基交易/行情端點,Server_URL,gtsquot.kgieworld.com.tw:80 (210.61.188.54),成功,3/3,HTS 備援通訊埠 (TCP 80 長連線),21.75,正常,TCP 80 三方交握成功（供新超級大三元專屬封包通訊使用）
+凱基交易/行情端點,Server_URL,gtsquot.kgieworld.com.tw:443 (210.61.188.54),成功,3/3,非標準 TLS（HTS 專屬封包協定 over TCP 443）,13.3,正常,TCP 443 三方交握迅速成功，但伺服器不回應標準 TLS ClientHello（等待專屬 HTS 封包）
+凱基交易/行情端點,SecForeign_URL,gtsftrade.kgieworld.com.tw:80 (210.61.188.57),成功,3/3,HTS 備援通訊埠 (TCP 80 長連線),22.74,正常,TCP 80 三方交握成功（供新超級大三元專屬封包通訊使用）
+凱基交易/行情端點,SecForeign_URL,gtsftrade.kgieworld.com.tw:443 (210.61.188.57),成功,3/3,非標準 TLS（HTS 專屬封包協定 over TCP 443）,23.01,正常,TCP 443 三方交握迅速成功，但伺服器不回應標準 TLS ClientHello（等待專屬 HTS 封包）
+凱基交易/行情端點,Foreign_URL,gtsfquot.kgieworld.com.tw:80 (210.61.188.56),成功,3/3,HTS 備援通訊埠 (TCP 80 長連線),20.16,正常,TCP 80 三方交握成功（供新超級大三元專屬封包通訊使用）
+凱基交易/行情端點,Foreign_URL,gtsfquot.kgieworld.com.tw:443 (210.61.188.56),成功,3/3,非標準 TLS（HTS 專屬封包協定 over TCP 443）,24.8,正常,TCP 443 三方交握迅速成功，但伺服器不回應標準 TLS ClientHello（等待專屬 HTS 封包）

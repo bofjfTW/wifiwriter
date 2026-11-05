@@ -1,0 +1,8 @@
+# Campus Network Diagnostic (壓力測試 — 校園網路連線診斷系統)
+#
+# 本專案核心功能 100% 使用 Python 3 標準函式庫 (Python >= 3.10) 與 Windows 10/11 內建 PowerShell 5.1，
+# 不依賴任何第三方外部套件，避免在校園網路受限或 Proxy 環境下因 pip 安裝失敗而無法執行。
+#
+# 標準函式庫模組包含：
+# argparse, csv, datetime, html, json, logging, os, pathlib, re, socket, ssl, statistics, subprocess, sys, time, unittest, urllib
+

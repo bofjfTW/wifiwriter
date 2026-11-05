@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>校園網路與凱基新超級大三元診斷報告</title>
+<style>
+  body { font-family: "Microsoft JhengHei", system-ui, sans-serif; background: #f8fafc; color: #0f172a; margin: 0; padding: 24px; line-height: 1.6; }
+  .container { max-width: 1180px; margin: 0 auto; }
+  header { background: #1e293b; color: #fff; padding: 20px 28px; border-radius: 10px; margin-bottom: 24px; }
+  header h1 { margin: 0 0 8px 0; font-size: 22px; }
+  header p { margin: 4px 0; color: #cbd5e1; font-size: 14px; }
+  section { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px 24px; margin-bottom: 20px; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+  h2 { margin-top: 0; font-size: 18px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; color: #1e3a8a; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 10px; }
+  th, td { border: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: #f1f5f9; font-weight: 600; }
+  code { background: #f1f5f9; padding: 2px 5px; border-radius: 4px; font-family: Consolas, monospace; font-size: 13px; }
+  .badge { color: #fff; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; display: inline-block; }
+  .card { border: 1px solid #cbd5e1; border-radius: 8px; padding: 14px 18px; margin-bottom: 12px; background: #fcfdff; }
+  .card h3 { margin: 0 0 6px 0; font-size: 16px; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; font-size: 14px; }
+  @media (max-width: 768px) { .cols { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>校園網路與凱基證券「新超級大三元」連線診斷報告</h1>
+    <p>產生時間：2026-11-05T22:17:22.948169 ｜ 作業系統：Microsoft Windows 10 專業版 ｜ 主要介面：Ethernet (乙太網路)</p>
+    <p>安全政策：唯讀、低負載、個人資訊遮罩、離線渲染（無任何外部伺服器連線）</p>
+  </header>
+
+  <section>
+    <h2>1. 凱基「新超級大三元」實際交易與行情端點檢測</h2>
+    <table>
+      <thead><tr><th>角色</th><th>FQDN:Port</th><th>實測解析 IP</th><th>TCP 成功</th><th>平均延遲</th><th>連通狀態</th><th>協定行為特徵</th></tr></thead>
+      <tbody><tr><td><code>SecServer_URL</code></td><td><code>gtstrade.kgieworld.com.tw:80</code></td><td><code>210.61.188.55</code></td><td>3/3</td><td>20.27 ms</td><td><span class='badge' style='background:#15803d'>正常連通</span></td><td>HTS 備援通訊埠 (TCP 80 長連線) — TCP 80 三方交握成功（供新超級大三元專屬封包通訊使用）</td></tr><tr><td><code>SecServer_URL</code></td><td><code>gtstrade.kgieworld.com.tw:443</code></td><td><code>210.61.188.55</code></td><td>3/3</td><td>24.31 ms</td><td><span class='badge' style='background:#15803d'>正常連通</span></td><td>非標準 TLS（HTS 專屬封包協定 over TCP 443） — TCP 443 三方交握迅速成功，但伺服器不回應標準 TLS ClientHello（等待專屬 HTS 封包）</td></tr><tr><td><code>Server_URL</code></td><td><code>gtsquot.kgieworld.com.tw:80</code></td><td><code>210.61.188.54</code></td><td>3/3</td><td>21.75 ms</td><td><span class='badge' style='background:#15803d'>正常連通</span></td><td>HTS 備援通訊埠 (TCP 80 長連線) — TCP 80 三方交握成功（供新超級大三元專屬封包通訊使用）</td></tr><tr><td><code>Server_URL</code></td><td><code>gtsquot.kgieworld.com.tw:443</code></td><td><code>210.61.188.54</code></td><td>3/3</td><td>13.3 ms</td><td><span class='badge' style='background:#15803d'>正常連通</span></td><td>非標準 TLS（HTS 專屬封包協定 over TCP 443） — TCP 443 三方交握迅速成功，但伺服器不回應標準 TLS ClientHello（等待專屬 HTS 封包）</td></tr><tr><td><code>SecForeign_URL</code></td><td><code>gtsftrade.kgieworld.com.tw:80</code></td><td><code>210.61.188.57</code></td><td>3/3</td><td>22.74 ms</td><td><span class='badge' style='background:#15803d'>正常連通</span></td><td>HTS 備援通訊埠 (TCP 80 長連線) — TCP 80 三方交握成功（供新超級大三元專屬封包通訊使用）</td></tr><tr><td><code>SecForeign_URL</code></td><td><code>gtsftrade.kgieworld.com.tw:443</code></td><td><code>210.61.188.57</code></td><td>3/3</td><td>23.01 ms</td><td><span class='badge' style='background:#15803d'>正常連通</span></td><td>非標準 TLS（HTS 專屬封包協定 over TCP 443） — TCP 443 三方交握迅速成功，但伺服器不回應標準 TLS ClientHello（等待專屬 HTS 封包）</td></tr><tr><td><code>Foreign_URL</code></td><td><code>gtsfquot.kgieworld.com.tw:80</code></td><td><code>210.61.188.56</code></td><td>3/3</td><td>20.16 ms</td><td><span class='badge' style='background:#15803d'>正常連通</span></td><td>HTS 備援通訊埠 (TCP 80 長連線) — TCP 80 三方交握成功（供新超級大三元專屬封包通訊使用）</td></tr><tr><td><code>Foreign_URL</code></td><td><code>gtsfquot.kgieworld.com.tw:443</code></td><td><code>210.61.188.56</code></td><td>3/3</td><td>24.8 ms</td><td><span class='badge' style='background:#15803d'>正常連通</span></td><td>非標準 TLS（HTS 專屬封包協定 over TCP 443） — TCP 443 三方交握迅速成功，但伺服器不回應標準 TLS ClientHello（等待專屬 HTS 封包）</td></tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>2. 公開網站限制對照檢查</h2>
+    <table>
+      <thead><tr><th>目標</th><th>URL</th><th>DNS</th><th>TCP</th><th>平均延遲</th><th>診斷分類</th><th>證據分析</th></tr></thead>
+      <tbody><tr><td>凱基證券官方網站</td><td><code>https://www.kgi.com.tw/</code></td><td>成功</td><td>3/3</td><td>13.38 ms</td><td><span class='badge' style='background:#15803d'>正常</span></td><td>DNS、TCP、TLS 憑證鏈與 HTTP 回應（302）皆正常</td></tr><tr><td>凱基期貨－新超級大三元官方頁面</td><td><code>https://www.kgif.com.tw/zh-tw/individual-trading-platform-super</code></td><td>成功</td><td>3/3</td><td>6.51 ms</td><td><span class='badge' style='background:#15803d'>正常</span></td><td>DNS、TCP、TLS 憑證鏈與 HTTP 回應（200）皆正常</td></tr><tr><td>凱基全球理財網 (HTS 公告與資訊端點)</td><td><code>https://www.kgieworld.com.tw/</code></td><td>成功</td><td>3/3</td><td>5.2 ms</td><td><span class='badge' style='background:#15803d'>正常</span></td><td>DNS、TCP、TLS 憑證鏈與 HTTP 回應（200）皆正常</td></tr><tr><td>Microsoft 官方網站</td><td><code>https://www.microsoft.com/</code></td><td>成功</td><td>3/3</td><td>4.94 ms</td><td><span class='badge' style='background:#15803d'>正常</span></td><td>DNS、TCP、TLS 憑證鏈與 HTTP 回應（200）皆正常</td></tr><tr><td>GitHub 官方網站</td><td><code>https://github.com/</code></td><td>成功</td><td>3/3</td><td>35.22 ms</td><td><span class='badge' style='background:#15803d'>正常</span></td><td>DNS、TCP、TLS 憑證鏈與 HTTP 回應（200）皆正常</td></tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>3. 斷線根本原因決策評估排序（A ~ G）</h2>
+    <div class='card'><h3>第 1 順位：[G] 目前證據不足，尚無法最終定論單一根本原因（需補齊登入狀態監控與熱點對照） <span class='badge' style='background:#15803d'>信心：高 (90/100)</span></h3><p><strong>證據等級：</strong>已確認事實</p><div class='cols'><div><strong>支持證據：</strong><ul><li>本次自動基準檢查執行時，使用者尚未開啟並登入「新超級大三元」，尚未擷取到斷線當下的即時 Socket 狀態變化。</li><li>尚未累積 30 秒週期之長時段斷線時間序列監控紀錄。</li><li>尚未進行個人手機熱點（測試 B）對照實驗，依科學診斷原則不得在缺乏對照證據前直接歸咎於學校封鎖。</li></ul></div><div><strong>反證：</strong><ul><li>已完成本機網路環境、防火牆、Proxy、凱基安裝路徑與官方交易端點（YELLOWPAGE.INI）之完整靜態與連通性基準取證。</li></ul></div></div></div><div class='card'><h3>第 2 順位：[A] 學校網路出口或防火牆問題（NGFW 協定檢測 / NAT 長連線閒置逾時） <span class='badge' style='background:#b45309'>信心：中 (60/100)</span></h3><p><strong>證據等級：</strong>可能原因</p><div class='cols'><div><strong>支持證據：</strong><ul><li>實測發現凱基報價/交易伺服器（gtsfquot.kgieworld.com.tw:443, gtsftrade.kgieworld.com.tw:443, gtsquot.kgieworld.com.tw:443, gtstrade.kgieworld.com.tw:443）雖使用 TCP 443/80 通訊埠，但並非標準 HTTPS/TLS 交握，而是凱基 HTS 專屬加密長連線協定（axsock.ocx / TS070300）；校園次世代防火牆（NGFW App-ID / Application Control）常將 Port 443 上的非標準 TLS 長連線識別為 unknown-tcp 或異常協定，進而套用極短閒置逾時（如 30~120 秒）或週期性中斷連線。</li><li>本機網路環境辨識具學術網路（TANet 140.x）或企業級 802.1X 網路特徵。</li></ul></div><div><strong>反證：</strong><ul><li>目前初次 TCP 三方交握對全部 8/8 個凱基端點均可連通，證實學校防火牆並未『完全靜態封鎖』凱基伺服器 IP 或 Port 80/443（若有關聯，較可能為長連線 NAT 狀態逾時或 NGFW 深度協定檢測中斷，而非靜態黑名單）。</li></ul></div></div></div><div class='card'><h3>第 3 順位：[F] 交易系統自身閒置逾時、換盤清盤或同帳號跨裝置（手機 App）Session 互踢 <span class='badge' style='background:#475569'>信心：低 (20/100)</span></h3><p><strong>證據等級：</strong>可能原因</p><div class='cols'><div><strong>支持證據：</strong><ul><li>靜態設定檔 tab/HTSWORK.INI 定義有盤後交易開盤清盤重載機制（FOCLR），特定換盤時段會提示或觸發畫面重載。</li><li>證券交易軟體普遍具有『單一帳號重複登入互踢（手機 App 三竹/隨身 e 策略與電腦版同時登入同一組身分證）』或『交易 Session 閒置逾時保護』機制。</li></ul></div><div><strong>反證：</strong><ul><li>尚未經由長連線監控排除</li></ul></div></div></div><div class='card'><h3>第 4 順位：[B] DNS 解析異常或系統/透明 Proxy 干擾問題 <span class='badge' style='background:#475569'>信心：低 (15/100)</span></h3><p><strong>證據等級：</strong>可能原因</p><div class='cols'><div><strong>支持證據：</strong><ul><li>目前未偵測到本機 Proxy 或 DNS 解析失敗</li></ul></div><div><strong>反證：</strong><ul><li>本機 WinINET 系統 Proxy 未啟用，且無設定 PAC 自動組態網址。</li><li>本機 WinHTTP 為直接存取（Direct access，無代理伺服器）。</li><li>公開 HTTPS 網站（凱基官網、Microsoft、GitHub）憑證簽發者皆為合法公開 CA，未偵測到透明 SSL MITM 憑證替換。</li><li>過去 24 小時系統日誌無 DNS Client 1014 解析逾時紀錄，且凱基網域目前皆可正常解析。</li></ul></div></div></div><div class='card'><h3>第 5 順位：[D] Windows 本機防火牆、端點安全軟體、VPN 或網卡省電/睡眠設定問題 <span class='badge' style='background:#475569'>信心：低 (15/100)</span></h3><p><strong>證據等級：</strong>可能原因</p><div class='cols'><div><strong>支持證據：</strong><ul><li>本機防火牆與代理檢查無異常阻擋</li></ul></div><div><strong>反證：</strong><ul><li>Windows 防火牆對外預設動作為 Allow，且無針對 SUPERTSC64.exe 或 axis.exe 之封鎖規則。</li><li>目前未偵測到第三方 VPN 或本地代理工具（如 Clash/WireGuard/OpenVPN）在背景執行。</li></ul></div></div></div><div class='card'><h3>第 6 順位：[E] 凱基證券伺服器維護/瞬斷或交易程式版本問題 <span class='badge' style='background:#475569'>信心：低 (15/100)</span></h3><p><strong>證據等級：</strong>可能原因</p><div class='cols'><div><strong>支持證據：</strong><ul><li>目前伺服器 TCP 回應與程式檔案簽章皆正常</li></ul></div><div><strong>反證：</strong><ul><li>Crashpad 目錄無當機傾印檔（0 個 .dmp），無主程式崩潰跡象。</li><li>核心執行檔（SUPERTSC64.exe v2.0.0、axis.exe v3.0.0.1，安裝版本 1.0.5）具備有效之 KGI Securities Co. Ltd. 數位簽章，檔案完整未損毀。</li><li>凱基國內與外期報價/交易伺服器（gtsquot/gtstrade/gtsfquot/gtsftrade.kgieworld.com.tw）目前皆正常回應 TCP 連線。</li></ul></div></div></div><div class='card'><h3>第 7 順位：[C] 網路品質不佳、瞬間封包遺失、網卡閃斷或校園 Wi-Fi 漫遊 <span class='badge' style='background:#475569'>信心：低 (10/100)</span></h3><p><strong>證據等級：</strong>可能原因</p><div class='cols'><div><strong>支持證據：</strong><ul><li>基準測試未見明顯封包遺失或訊號異常</li></ul></div><div><strong>反證：</strong><ul><li>目前主要連線為有線網路（Ethernet），可排除 Wi-Fi 訊號強弱與 AP 漫遊因素。</li><li>基準測試期間凱基伺服器 TCP 建連平均延遲為 21.29 ms（抖動 6.09 ms），連線品質平穩。</li></ul></div></div></div>
+  </section>
+
+  <section>
+    <h2>4. 學校網路（測試 A）vs 手機熱點（測試 B）對照表</h2>
+    <p><strong>狀態：</strong>未測試 — 尚未匯入學校網路（測試 A）與手機熱點（測試 B）之長時段監控紀錄。</p>
+    <table>
+      <thead><tr><th>比較指標</th><th>測試 A：學校網路</th><th>測試 B：個人手機熱點</th><th>差異 (A - B)</th></tr></thead>
+      <tbody><tr><td>1. 連線成功率 (%)</td><td><code>未測試</code></td><td><code>未測試</code></td><td><code>未測試</code></td></tr><tr><td>2. TCP 連線建立平均耗時 (ms)</td><td><code>未測試</code></td><td><code>未測試</code></td><td><code>未測試</code></td></tr><tr><td>3. 連線中斷次數 (次)</td><td><code>未測試</code></td><td><code>未測試</code></td><td><code>未測試</code></td></tr><tr><td>4. 平均連線持續時間 (秒)</td><td><code>未測試</code></td><td><code>未測試</code></td><td><code>未測試</code></td></tr><tr><td>5. DNS 查詢成功率 (%)</td><td><code>未測試</code></td><td><code>未測試</code></td><td><code>未測試</code></td></tr><tr><td>6. 重新連線/Socket 切換次數 (次)</td><td><code>未測試</code></td><td><code>未測試</code></td><td><code>未測試</code></td></tr><tr><td>7. 系統網路異常事件數 (次)</td><td><code>未測試</code></td><td><code>未測試</code></td><td><code>未測試</code></td></tr><tr><td>8. 程式自身異常/中斷次數 (次)</td><td><code>未測試</code></td><td><code>未測試</code></td><td><code>未測試</code></td></tr></tbody>
+    </table>
+  </section>
+</div>
+</body>
+</html>

@@ -1,0 +1,111 @@
+{
+  "metadata": {
+    "profile_name": "default_campus_diagnostic",
+    "description": "預設白名單公開測試目標與本機指定應用程式設定（低負載、唯讀、非侵入式）",
+    "low_load_policy": {
+      "timeout_seconds": 5.0,
+      "tcp_probe_count": 3,
+      "probe_interval_seconds": 0.4,
+      "max_concurrency": 1,
+      "download_max_bytes": 0,
+      "download_method": "HEAD"
+    }
+  },
+  "websites": [
+    {
+      "id": "kgi_main",
+      "name": "凱基證券官方網站",
+      "url": "https://www.kgi.com.tw/",
+      "category": "kgi_official",
+      "port": 443,
+      "note": "凱基證券官方入口網站"
+    },
+    {
+      "id": "kgif_super",
+      "name": "凱基期貨－新超級大三元官方頁面",
+      "url": "https://www.kgif.com.tw/zh-tw/individual-trading-platform-super",
+      "category": "kgi_official",
+      "port": 443,
+      "note": "官方產品說明與系統需求頁面"
+    },
+    {
+      "id": "kgieworld",
+      "name": "凱基全球理財網 (HTS 公告與資訊端點)",
+      "url": "https://www.kgieworld.com.tw/",
+      "category": "kgi_official",
+      "port": 443,
+      "note": "新超級大三元內嵌資訊頁與服務網域"
+    },
+    {
+      "id": "microsoft",
+      "name": "Microsoft 官方網站",
+      "url": "https://www.microsoft.com/",
+      "category": "public_control",
+      "port": 443,
+      "note": "一般大型商業網站公開對照組"
+    },
+    {
+      "id": "github",
+      "name": "GitHub 官方網站",
+      "url": "https://github.com/",
+      "category": "public_control",
+      "port": 443,
+      "note": "開發者公開服務對照組"
+    }
+  ],
+  "applications": [
+    {
+      "id": "kgi_supertsc64",
+      "name": "凱基證券 新超級大三元 (啟動器 SUPERTSC64)",
+      "process_names": ["SUPERTSC64", "SuperTSC"],
+      "exe_hints": [
+        "D:\\超級大三元\\exe\\SUPERTSC64.exe",
+        "C:\\超級大三元\\exe\\SUPERTSC64.exe",
+        "C:\\KGI\\超級大三元\\exe\\SUPERTSC64.exe"
+      ],
+      "required_for_trading": true
+    },
+    {
+      "id": "kgi_axis_engine",
+      "name": "凱基證券 新超級大三元 (HTS 主連線核心 axis.exe)",
+      "process_names": ["axis", "VELOTRDER64", "TKAP3083"],
+      "exe_hints": [
+        "D:\\超級大三元\\exe\\axis.exe",
+        "C:\\超級大三元\\exe\\axis.exe",
+        "C:\\KGI\\超級大三元\\exe\\axis.exe"
+      ],
+      "required_for_trading": true
+    }
+  ],
+  "downloads": [
+    {
+      "id": "kgi_ca_exe_head",
+      "name": "凱基官方憑證元件端點 (.exe 檔案限制檢測)",
+      "url": "https://event.kgi.com.tw/uploadfiles/euploadfile/KGI_CA.exe",
+      "base_site_url": "https://event.kgi.com.tw/",
+      "file_type": ".exe",
+      "method": "HEAD",
+      "note": "取自新超級大三元內建 LINK.INI 官方 CA_CENTER 端點；預設僅發送 HEAD 請求（不下載檔案內容），檢驗校園防火牆是否針對 .exe 副檔名攔截"
+    },
+    {
+      "id": "kgif_super_page_head",
+      "name": "凱基新超級大三元產品頁 HEAD 檢測",
+      "url": "https://www.kgif.com.tw/zh-tw/individual-trading-platform-super",
+      "base_site_url": "https://www.kgif.com.tw/",
+      "file_type": "html",
+      "method": "HEAD",
+      "note": "同集團網頁端點對照"
+    },
+    {
+      "id": "github_robots_head",
+      "name": "GitHub 純文字端點 HEAD 檢測",
+      "url": "https://github.com/robots.txt",
+      "base_site_url": "https://github.com/",
+      "file_type": ".txt",
+      "method": "HEAD",
+      "note": "公開純文字靜態資源對照組"
+    }
+  ],
+  "custom_endpoints": []
+}
+

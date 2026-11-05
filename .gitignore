@@ -1,0 +1,17 @@
+# Python bytecode & caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Local custom config overrides & transient runtime flags
+config/targets.json
+reports/monitor_stop.flag
+reports/monitor_state.json
+
+# OS / Editor metadata
+Thumbs.db
+Desktop.ini
+.DS_Store
+.vscode/
+.idea/
