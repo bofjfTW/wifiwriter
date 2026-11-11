@@ -1,4 +1,4 @@
-"""報告產生器：輸出 Markdown、JSON、CSV 與離線安全 HTML 視覺化診斷報告."""
+"""報告產生器 (v0.2)：輸出 Markdown、JSON、CSV 與離線安全 HTML 診斷報告（含事件時間線與七大問題實證回答）."""
 
 from __future__ import annotations
 
@@ -9,13 +9,22 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
+from src.analyzer import (
+    STATUS_NOT_TESTED,
+    TIER_CONDITIONAL_INFERENCE,
+    TIER_CONFIRMED_FACT,
+    TIER_UNVERIFIED_HYPOTHESIS,
+    answer_seven_diagnostic_questions,
+    mask_sensitive_text,
+)
+
 
 def _badge_color(status_text: str) -> str:
-    if status_text in ("正常", "高"):
+    if status_text in ("正常", TIER_CONFIRMED_FACT, "SUCCESS"):
         return "#15803d"
-    if status_text in ("連線失敗", "確認有明確封鎖回應"):
+    if status_text in ("連線失敗", "確認有明確封鎖回應", "FAILED"):
         return "#b91c1c"
-    if status_text in ("可能受到限制", "中"):
+    if status_text in ("可能受到限制", TIER_CONDITIONAL_INFERENCE, "PARTIAL"):
         return "#b45309"
     return "#475569"
 
@@ -37,8 +46,10 @@ def generate_network_environment_markdown(env_data: Dict[str, Any]) -> str:
     lines: List[str] = [
         "# Windows 本機網路環境自動辨識報告 (`network_environment.md`)",
         "",
+        f"- **Run ID：** `{env_data.get('run_id', 'N/A')}`",
         f"- **蒐集時間：** `{env_data.get('collected_at', '')}`",
-        f"- **執行模式：** 唯讀、非侵入式本機檢查（未修改任何系統設定，未掃描校園網段）",
+        f"- **步驟狀態：** `{env_data.get('run_status', 'SUCCESS')}`",
+        "- **執行模式：** 唯讀、非侵入式本機檢查（未修改任何系統設定，未掃描校園網段）",
         f"- **管理員權限狀態：** `{'是 (Elevated)' if os_info.get('is_elevated') else '否 (一般使用者權限)'}`",
         "",
         "## 1. Windows 系統與電源資訊",
@@ -139,7 +150,7 @@ def generate_network_environment_markdown(env_data: Dict[str, Any]) -> str:
     kgi_rules = fw.get("kgi_related_rules") or []
     lines.append(f"- **與凱基 / 新超級大三元相關之防火牆規則數：** `{len(kgi_rules)}`")
     for r in kgi_rules[:10]:
-        lines.append(f"  - `{r.get('rule_id')}`: `{r.get('raw_summary')}`")
+        lines.append(f"  - `{r.get('rule_id')}`: `{mask_sensitive_text(str(r.get('raw_summary', '')))}`")
 
     lines.extend(
         [
@@ -197,7 +208,7 @@ def generate_network_environment_markdown(env_data: Dict[str, Any]) -> str:
             f"- **虛擬/VPN 網卡介面數：** `{len(vpn_sec.get('virtual_vpn_adapters') or [])}`",
             f"- **執行中之 VPN / 代理程序：** `{', '.join(vpn_sec.get('running_vpn_or_proxy_processes') or []) or '無'}`",
             f"- **有線 802.1X 驗證服務 (`dot3svc`) 執行中：** `{vpn_sec.get('wired_8021x_service_running', False)}`",
-            f"- **已註冊之防毒/防火牆產品：** "
+            "- **已註冊之防毒/防火牆產品：** "
             + (
                 ", ".join(
                     f"{s.get('display_name')} ({s.get('type')})"
@@ -216,8 +227,9 @@ def write_csv_summary(
     kgi_probes: List[Dict[str, Any]],
     ab_comparison: Dict[str, Any],
     output_dir: Path,
+    event_timeline: List[Dict[str, Any]] | None = None,
 ) -> Dict[str, str]:
-    """輸出結構化 CSV 診斷表格（UTF-8 with BOM 以便 Windows Excel 直接開啟不亂碼）."""
+    """輸出結構化 CSV 診斷表格（含 diagnostic_summary.csv、ab_comparison.csv 與 event_timeline.csv）."""
     output_dir.mkdir(parents=True, exist_ok=True)
     paths: Dict[str, str] = {}
 
@@ -228,10 +240,11 @@ def write_csv_summary(
             [
                 "檢查類型",
                 "目標名稱",
+                "端點來源分類",
                 "端點或路徑",
                 "DNS/安裝狀態",
                 "TCP/執行狀態",
-                "HTTP或協定細節",
+                "TLS狀態與協定分類",
                 "延遲(ms)",
                 "診斷分類",
                 "證據說明",
@@ -243,13 +256,14 @@ def write_csv_summary(
                 [
                     "網站連線",
                     w.get("name", ""),
+                    "whitelist_website",
                     w.get("url", ""),
                     "成功" if w.get("dns_ok") else "失敗",
                     w.get("tcp_success_rate", ""),
                     f"HTTP {http_code} / TLS={bool((w.get('tls') or {}).get('ok'))}",
                     w.get("tcp_avg_rtt_ms", ""),
                     w.get("classification", ""),
-                    w.get("evidence_summary", ""),
+                    mask_sensitive_text(str(w.get("evidence_summary", ""))),
                 ]
             )
         for a in restrictions.get("applications") or []:
@@ -257,13 +271,14 @@ def write_csv_summary(
                 [
                     "本機應用程式",
                     a.get("name", ""),
-                    a.get("executable_path", ""),
+                    "local_application",
+                    mask_sensitive_text(str(a.get("executable_path", ""))),
                     f"已安裝(v{a.get('file_version', '')})" if a.get("installed") else "未找到",
                     "執行中" if a.get("is_running") else "未啟動",
                     f"簽章={a.get('signature_status', '')}, FW封鎖={a.get('firewall_block_rules', 0)}",
                     "",
                     a.get("classification", ""),
-                    a.get("evidence_summary", ""),
+                    mask_sensitive_text(str(a.get("evidence_summary", ""))),
                 ]
             )
         for d in restrictions.get("downloads") or []:
@@ -271,28 +286,32 @@ def write_csv_summary(
                 [
                     "檔案下載(HEAD)",
                     d.get("name", ""),
+                    "authorized_download",
                     d.get("url", ""),
                     f"主站 HTTP {d.get('base_site_status', '')}",
                     f"端點 HTTP {d.get('download_status', '')}",
                     f"型態={d.get('file_type', '')}, Method={d.get('method_used', 'HEAD')}",
                     d.get("latency_ms", ""),
                     d.get("classification", ""),
-                    d.get("evidence_summary", ""),
+                    mask_sensitive_text(str(d.get("evidence_summary", ""))),
                 ]
             )
         for kp in kgi_probes:
             tls_p = kp.get("tls_probe") or {}
+            tls_st = tls_p.get("tls_status", "TLS_NOT_TESTED")
+            app_proto = tls_p.get("application_protocol", "UNKNOWN")
             writer.writerow(
                 [
-                    "凱基交易/行情端點",
+                    "凱基端點探測",
                     kp.get("role", ""),
+                    kp.get("endpoint_source", "static_ini_candidate"),
                     f"{kp.get('fqdn', '')}:{kp.get('port', '')} ({kp.get('primary_ip', '')})",
                     "成功" if kp.get("dns_ok") else "失敗",
                     f"{kp.get('tcp_ok_count', 0)}/{kp.get('tcp_probe_count', 0)}",
-                    tls_p.get("protocol_summary", ""),
+                    f"TLS={tls_st} / Protocol={app_proto}",
                     kp.get("tcp_avg_ms", ""),
-                    "正常" if kp.get("tcp_ok_count", 0) > 0 else "連線失敗",
-                    tls_p.get("detail", ""),
+                    "TCP可連通" if kp.get("tcp_ok_count", 0) > 0 else "連線失敗",
+                    mask_sensitive_text(str(tls_p.get("detail", ""))),
                 ]
             )
     paths["diagnostic_summary_csv"] = str(rest_csv)
@@ -305,18 +324,56 @@ def write_csv_summary(
             writer.writerow(
                 [
                     row.get("metric_name", ""),
-                    row.get("campus_value", "未測試"),
-                    row.get("hotspot_value", "未測試"),
-                    row.get("difference_a_minus_b", "未測試"),
+                    row.get("campus_value", STATUS_NOT_TESTED),
+                    row.get("hotspot_value", STATUS_NOT_TESTED),
+                    row.get("difference_a_minus_b", STATUS_NOT_TESTED),
                 ]
             )
     paths["ab_comparison_csv"] = str(ab_csv)
+
+    tl_csv = output_dir / "event_timeline.csv"
+    with tl_csv.open("w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            [
+                "Timestamp",
+                "Run ID",
+                "Network Profile",
+                "Process Identity",
+                "Event Type",
+                "Observed State",
+                "Supporting Evidence",
+                "Alternative Explanations",
+                "Confidence Classification",
+                "Evidence Source",
+            ]
+        )
+        for ev in event_timeline or []:
+            writer.writerow(
+                [
+                    ev.get("timestamp", ""),
+                    ev.get("run_id", ""),
+                    ev.get("network_profile", ""),
+                    mask_sensitive_text(str(ev.get("process_identity", ""))),
+                    ev.get("event_type", ""),
+                    mask_sensitive_text(str(ev.get("observed_state", ""))),
+                    mask_sensitive_text(str(ev.get("supporting_evidence", ""))),
+                    mask_sensitive_text(str(ev.get("alternative_explanations", ""))),
+                    ev.get("confidence_classification", ""),
+                    ev.get("evidence_source", ""),
+                ]
+            )
+    paths["event_timeline_csv"] = str(tl_csv)
     return paths
 
 
 def generate_research_report_markdown(bundle: Dict[str, Any]) -> str:
-    """第七階段：產生完整繁體中文研究報告 (`diagnostic_report.md`)."""
+    """產生完整繁體中文研究報告 (v0.2：含七大問題回答、10 欄位事件時間線與嚴格三層證據分級)."""
     gen_at = bundle.get("generated_at", datetime.now().isoformat())
+    run_id = bundle.get("run_id", "run_unknown")
+    overall_status = bundle.get("overall_status", "PARTIAL")
+    step_statuses = bundle.get("step_statuses") or {}
+
     env = bundle.get("network_environment") or {}
     rest = bundle.get("restrictions") or {}
     kgi_info = bundle.get("kgi_inspection") or {}
@@ -325,6 +382,8 @@ def generate_research_report_markdown(bundle: Dict[str, Any]) -> str:
     root_causes = bundle.get("root_causes") or []
     ab_comp = bundle.get("ab_comparison") or {}
     campus_mon = bundle.get("campus_monitor")
+    timeline = bundle.get("event_timeline") or (campus_mon or {}).get("event_timeline") or []
+    qa_list = bundle.get("seven_questions") or answer_seven_diagnostic_questions(bundle)
 
     os_info = env.get("os_and_system") or {}
     prim = env.get("primary_connection") or {}
@@ -333,37 +392,54 @@ def generate_research_report_markdown(bundle: Dict[str, Any]) -> str:
     arch = kgi_info.get("architecture_and_reconnect") or {}
 
     lines: List[str] = [
-        "# 校園網路與凱基證券「新超級大三元」斷線問題完整診斷研究報告",
+        "# 校園網路與凱基證券「新超級大三元」斷線問題診斷研究報告 (`v0.2`)",
         "",
+        f"- **Run ID：** `{run_id}`",
         f"- **報告產生時間：** `{gen_at}`",
-        "- **診斷性質：** 個人端點授權範圍內之唯讀、低負載、非侵入式連線診斷",
-        "- **核心聲明：** 所有數據均來自本機實測取證；尚未由使用者手動觸發之動態實驗均誠實標記為「`未測試`」，絕不杜撰任何測試數據。",
+        f"- **本次診斷整體資料狀態：** `{overall_status}`",
+        f"- **各階段執行狀態：** `{json.dumps(step_statuses, ensure_ascii=False)}`",
+        "- **科學與安全聲明：** 本報告僅依據本機唯讀實測證據產生；單獨 TCP 探測失敗不計入交易斷線；TCP 443 標準 TLS 失敗不推論為專屬協定或防火牆攔截；未完成之實驗均標示為 `NOT_TESTED` 或 `PARTIAL`。",
         "",
         "---",
         "",
-        "## 1. 網路環境摘要",
+        "## 0. 七大核心診斷問題實證回答",
         "",
-        f"- **作業系統：** {os_info.get('caption', '')} `{os_info.get('display_version', '')}` (Build `{os_info.get('build_number', '')}.{os_info.get('ubr', '')}`)",
-        f"- **主要連線介面：** `{prim.get('connection_type', '')}`（介面名稱：`{prim.get('interface_alias', '')}`，環境辨識：`{prim.get('environment_hint', '')}`）",
+        "| 核心問題 | 實證回答 |",
+        "| --- | --- |",
     ]
+    for qa in qa_list:
+        lines.append(
+            f"| **{qa.get('question', '')}** | {mask_sensitive_text(str(qa.get('answer', '')))} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "---",
+            "",
+            "## 1. 網路環境摘要",
+            "",
+            f"- **作業系統：** {os_info.get('caption', '')} `{os_info.get('display_version', '')}` (Build `{os_info.get('build_number', '')}.{os_info.get('ubr', '')}`)",
+            f"- **主要連線介面：** `{prim.get('connection_type', 'NOT_TESTED')}`（介面名稱：`{prim.get('interface_alias', '')}`，環境特徵：`{prim.get('environment_hint', '')}`）",
+        ]
+    )
 
     for ic in env.get("active_ip_configurations") or []:
         ip_desc = ", ".join(
             f"`{a.get('ip_masked')}` (遮罩 `{a.get('subnet_mask')}`, 類型 `{a.get('ip_class')}`)"
             for a in (ic.get("ipv4_addresses") or [])
         )
-        gw_desc = ", ".join(
-            f"`{g.get('next_hop_masked')}`" for g in (ic.get("ipv4_gateways") or [])
-        )
+        gw_desc = ", ".join(f"`{g.get('next_hop_masked')}`" for g in (ic.get("ipv4_gateways") or []))
         dns_desc = ", ".join(
-            f"`{d.get('address_masked')}` ({d.get('address_class')})"
-            for d in (ic.get("dns_servers") or [])
+            f"`{d.get('address_masked')}` ({d.get('address_class')})" for d in (ic.get("dns_servers") or [])
         )
-        lines.append(f"- **啟用介面 `{ic.get('interface_alias')}`：** IP={ip_desc or '無'}；預設閘道={gw_desc or '無'}；DNS={dns_desc or '無'}")
+        lines.append(
+            f"- **啟用介面 `{ic.get('interface_alias')}`：** IP={ip_desc or '無'}；預設閘道={gw_desc or '無'}；DNS={dns_desc or '無'}"
+        )
 
     lines.extend(
         [
-            f"- **Windows 防火牆：** 對外預設皆為 Allow，與凱基相關之封鎖規則數 = `{sum(1 for r in (fw.get('kgi_related_rules') or []) if 'Action=Block' in str(r.get('raw_summary', '')))}`",
+            f"- **Windows 防火牆：** 與凱基相關之封鎖規則數 = `{sum(1 for r in (fw.get('kgi_related_rules') or []) if 'Action=Block' in str(r.get('raw_summary', '')))}`",
             f"- **系統 Proxy / PAC：** WinINET Proxy=`{proxy.get('wininet_proxy_enabled', False)}`、PAC=`{proxy.get('wininet_pac_url') or '無'}`、WinHTTP 直接存取=`{proxy.get('winhttp_direct_access', True)}`",
             "",
             "---",
@@ -379,11 +455,11 @@ def generate_research_report_markdown(bundle: Dict[str, Any]) -> str:
     for w in rest.get("websites") or []:
         tls_obj = w.get("tls") or {}
         http_obj = w.get("http") or {}
-        tls_txt = "正常" if tls_obj.get("ok") else f"異常 ({tls_obj.get('error', '')[:25]})"
+        tls_txt = "正常" if tls_obj.get("ok") else f"異常 ({str(tls_obj.get('error', ''))[:25]})"
         lines.append(
             f"| {w.get('name')} | {w.get('url')} | {'成功' if w.get('dns_ok') else '失敗'} | "
             f"`{w.get('tcp_success_rate')}` | `{w.get('tcp_avg_rtt_ms')} ms` | {tls_txt} | "
-            f"`{http_obj.get('status_code')}` | **{w.get('classification')}** | {w.get('evidence_summary')} |"
+            f"`{http_obj.get('status_code')}` | **{w.get('classification')}** | {mask_sensitive_text(str(w.get('evidence_summary', '')))} |"
         )
 
     lines.extend(
@@ -397,15 +473,15 @@ def generate_research_report_markdown(bundle: Dict[str, Any]) -> str:
     )
     for a in rest.get("applications") or []:
         lines.append(
-            f"| {a.get('name')} | `{a.get('executable_path') or '未找到'}` | `{a.get('file_version')}` | "
+            f"| {a.get('name')} | `{mask_sensitive_text(str(a.get('executable_path') or '未找到'))}` | `{a.get('file_version')}` | "
             f"`{a.get('signature_status')}` | `{'是' if a.get('is_running') else '否 (未啟動)'}` | "
-            f"`{a.get('firewall_block_rules', 0)}` | **{a.get('classification')}** | {a.get('evidence_summary')} |"
+            f"`{a.get('firewall_block_rules', 0)}` | **{a.get('classification')}** | {mask_sensitive_text(str(a.get('evidence_summary', '')))} |"
         )
 
     lines.extend(
         [
             "",
-            "### 2.3 授權官方端點檔案下載限制檢查（僅低負載 HEAD 請求）",
+            "### 2.3 授權官方端點檔案下載限制檢查（低負載 HEAD）",
             "",
             "| 測試項目 | 檔案型態 | 主站狀態 | 端點狀態 | 延遲 | 診斷分類 | 證據分析 |",
             "| --- | --- | --- | --- | --- | --- | --- |",
@@ -414,7 +490,7 @@ def generate_research_report_markdown(bundle: Dict[str, Any]) -> str:
     for d in rest.get("downloads") or []:
         lines.append(
             f"| {d.get('name')} | `{d.get('file_type')}` | `HTTP {d.get('base_site_status')}` | "
-            f"`HTTP {d.get('download_status')}` | `{d.get('latency_ms')} ms` | **{d.get('classification')}** | {d.get('evidence_summary')} |"
+            f"`HTTP {d.get('download_status')}` | `{d.get('latency_ms')} ms` | **{d.get('classification')}** | {mask_sensitive_text(str(d.get('evidence_summary', '')))} |"
         )
 
     lines.extend(
@@ -422,102 +498,128 @@ def generate_research_report_markdown(bundle: Dict[str, Any]) -> str:
             "",
             "---",
             "",
-            "## 3. 凱基證券「新超級大三元」深度斷線分析（最高優先級）",
+            "## 3. 凱基證券「新超級大三元」程序驗證與連線診斷",
             "",
-            "### 3.1 本機交易軟體實體辨識結果",
+            "### 3.1 多因子程序身分與安裝驗證",
             "",
-            f"- **安裝狀態：** `{'已安裝' if kgi_info.get('is_installed') else '未找到安裝目錄'}`（安裝目錄：`{', '.join(kgi_info.get('install_directories') or []) or '無'}`）",
-            f"- **登錄檔版本與發行者：** "
-            + (
-                "；".join(
-                    f"`{r.get('display_name')}` v`{r.get('display_version')}`（發行者：{r.get('publisher')}）"
-                    for r in (kgi_info.get("registry_entries") or [])
-                )
-                or "無"
-            ),
-            f"- **軟體平台底層架構：** `{arch.get('platform_engine', '')}`（通訊模組：`{arch.get('socket_module', '')}`，安全協定模組：`{arch.get('encryption_module', '')}`）",
-            f"- **內建背景連線管理與重連機制：** `{', '.join(arch.get('reconnect_mechanisms') or []) or '未檢出'}`",
-            f"- **檢查當下程序是否執行中：** `{'是' if kgi_info.get('is_currently_running') else '否（檢查時未啟動）'}`",
-        ]
-    )
-    last_log = arch.get("last_log_metadata")
-    if isinstance(last_log, dict):
-        lines.append(
-            f"- **最近一次啟動日誌（僅檢查檔案中繼資料，不解密內容）：** `{last_log.get('file_name')}`，最後寫入於 `{last_log.get('last_write_time')}`（對應歷史 PID `{last_log.get('pid_in_filename')}`）；Crashpad 當機傾印數：`{arch.get('crashpad_dump_count', 0)}`。"
-        )
-
-    lines.extend(
-        [
+            f"- **安裝狀態：** `{'已安裝' if kgi_info.get('is_installed') else '未找到安裝目錄'}`（目錄：`{', '.join(mask_sensitive_text(str(x)) for x in (kgi_info.get('install_directories') or [])) or '無'}`）",
+            f"- **檢查當下驗證通過之凱基程序執行中：** `{'是' if kgi_info.get('is_currently_running') else '否（未啟動）'}`",
+            f"- **遠端端點分級統計：** 實際觀測活躍端點 `{len(kgi_info.get('observed_active_endpoints') or [])}` 組 ｜ 靜態 INI 候選端點 `{len(kgi_info.get('configured_endpoints') or [])}` 組 ｜ 用途待確認之遠端端點 `{len(kgi_info.get('unverified_remote_endpoints') or [])}` 組",
+            f"- **靜態組態背景機制：** `{', '.join(arch.get('reconnect_mechanisms') or []) or '未檢出'}`",
             "",
-            "### 3.2 實際交易與行情伺服器端點及協定特徵檢測",
+            "### 3.2 端點低負載探測與 TLS 細分行為（不作未授權協定推論）",
             "",
-            "> **端點來源說明：** 以下端點直接取自本機已安裝「新超級大三元」之官方靜態設定檔 `tab/YELLOWPAGE.INI` 與執行中實際 TCP 連線，絕無憑空猜測。",
-            "",
-            "| 伺服器角色 | 驗證網域 (FQDN) | 解析 IP | 通訊埠 | TCP 成功率 | 平均耗時 | TCP Reset | 應用層/TLS 協定實測行為 |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| 來源分類 | 伺服器角色 | 目標 FQDN/IP | Port | TCP 成功率 | 平均 RTT | TCP RST | TLS 探測細分狀態 | 應用層協定判定 | 原始觀測說明 |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
     for kp in kgi_probes:
         tls_p = kp.get("tls_probe") or {}
         lines.append(
-            f"| `{kp.get('role')}` | `{kp.get('fqdn')}` | `{kp.get('primary_ip')}` | `{kp.get('port')}` | "
+            f"| `{kp.get('endpoint_source', 'static_ini_candidate')}` | `{kp.get('role')}` | `{kp.get('fqdn')}` (`{kp.get('primary_ip')}`) | `{kp.get('port')}` | "
             f"`{kp.get('tcp_ok_count')}/{kp.get('tcp_probe_count')}` | `{kp.get('tcp_avg_ms')} ms` | "
-            f"`{'是' if kp.get('tcp_rst_observed') else '否'}` | {tls_p.get('protocol_summary', '')}（{tls_p.get('detail', '')}） |"
+            f"`{'是' if kp.get('tcp_rst_observed') else '否'}` | `{tls_p.get('tls_status', 'TLS_NOT_TESTED')}` | "
+            f"`{tls_p.get('application_protocol', 'UNKNOWN')}` | {mask_sensitive_text(str(tls_p.get('detail', '')))} |"
         )
 
-    active_conns = kgi_info.get("active_tcp_connections") or []
-    lines.append("")
-    if active_conns:
-        lines.append(f"- **檢查當下捕捉到之活動中 TCP 連線數：** `{len(active_conns)}` 條")
-        for ac in active_conns[:15]:
-            lines.append(
-                f"  - PID `{ac.get('pid')}` (`{ac.get('process_name')}`): 本機埠 `{ac.get('local_port')}` -> `{ac.get('remote_address')}:{ac.get('remote_port')}` (`{ac.get('verified_fqdn')}`) State=`{ac.get('state')}`"
-            )
-    else:
-        lines.append("- **檢查當下活動中 TCP 連線：** `未測試 / 無活動連線`（因檢查當下使用者未開啟登入新超級大三元，需啟動軟體並搭配 `monitor start` 記錄即時連線變化）。")
-
-    lines.extend(["", "### 3.3 斷線時間監控紀錄摘要", ""])
+    lines.extend(["", "### 3.3 監控統計摘要（被動 5 秒 Socket 追蹤 + 主動 30 秒低負載探測）", ""])
     if campus_mon:
-        outages = campus_mon.get("outage_episodes") or []
-        lines.append(
-            f"- **監控區間：** `{campus_mon.get('started_at')}` 至 `{campus_mon.get('ended_at')}`（共 `{campus_mon.get('sample_count')}` 次取樣）"
+        cm = campus_mon.get("metrics") or {}
+        lines.extend(
+            [
+                f"- **監控 Run ID / 狀態：** `{campus_mon.get('run_id', 'N/A')}` / `{campus_mon.get('run_status', 'N/A')}`（完整性：`{campus_mon.get('data_completeness', 'N/A')}`）",
+                f"- **取樣數與總時長：** `{campus_mon.get('sample_count', 0)}` 次取樣，共 `{campus_mon.get('total_duration_sec', 0)}` 秒",
+                f"- **已確認交易斷線次數（僅計算具備應用層/使用者回報證據者）：** `{cm.get('confirmed_trading_disconnect_count', 0)}` 次（每小時率：`{cm.get('confirmed_disconnects_per_hour', 'N/A')}`）",
+                f"- **使用者手動標記斷線 / 恢復次數：** `{cm.get('user_reported_disconnect_count', 0)}` 次 / `{cm.get('user_reported_reconnect_count', 0)}` 次",
+                f"- **實際觀察到之 Socket 建立 / 結束次數：** 建立 `{cm.get('observed_socket_open_count', 0)}` 次 ／ 結束 `{cm.get('observed_socket_close_count', 0)}` 次",
+                f"- **可辨識的連線持續時間：** `{cm.get('identifiable_connection_duration_display', '無法精確估計')}`",
+                f"- **獨立主動探測成功率（凱基 TCP / DNS / 公開對照）：** `{cm.get('independent_kgi_probe_success_rate_pct', 'N/A')}%` / `{cm.get('independent_dns_success_rate_pct', 'N/A')}%` / `{cm.get('independent_control_probe_success_rate_pct', 'N/A')}%`",
+                f"- **無法分類之事件數 (`UNKNOWN_EVENT`)：** `{cm.get('unknown_event_count', 0)}` 次",
+            ]
         )
-        lines.append(f"- **觀測到之斷線事件數：** `{len(outages)}` 次")
-        for ep in outages:
+    else:
+        lines.append("- **監控狀態：** `NOT_TESTED`（尚未載入本次校園網路長時段監控紀錄）。")
+
+    lines.extend(
+        [
+            "",
+            "---",
+            "",
+            "## 4. 事件時間線（Event Timeline）",
+            "",
+            "| Timestamp | Run ID | Network Profile | Process Identity | Event Type | Observed State | Supporting Evidence | Alternative Explanations | Confidence Classification | Evidence Source |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    if timeline:
+        for ev in timeline[:100]:
             lines.append(
-                f"  - 開始：`{ep.get('started_at')}` -> 恢復：`{ep.get('recovered_at') or '未恢復'}`（持續 `{ep.get('duration_sec')} 秒`，原因：`{ep.get('reason')}`）"
+                f"| `{ev.get('timestamp', '')}` | `{ev.get('run_id', '')}` | `{ev.get('network_profile', '')}` | "
+                f"`{mask_sensitive_text(str(ev.get('process_identity', '')))}` | **`{ev.get('event_type', '')}`** | "
+                f"{mask_sensitive_text(str(ev.get('observed_state', '')))} | {mask_sensitive_text(str(ev.get('supporting_evidence', '')))} | "
+                f"{mask_sensitive_text(str(ev.get('alternative_explanations', '')))} | `{ev.get('confidence_classification', '')}` | `{ev.get('evidence_source', '')}` |"
             )
     else:
-        lines.append("- **長時段斷線監控狀態：** `未測試`（尚未累積使用者開啟交易軟體期間之 30 秒週期監控序列，請依操作說明執行 `monitor start`）。")
+        lines.append("| - | - | - | - | `NONE` | 目前無觸發之異常或標記事件 | - | - | - | - |")
 
-    lines.extend(["", "### 3.4 可能根本原因自動排序與證據評估（A ~ G）", ""])
+    lines.extend(
+        [
+            "",
+            "---",
+            "",
+            "## 5. 可能原因客觀評估（A ~ G，附可追溯原始證據來源）",
+            "",
+        ]
+    )
     for rc in root_causes:
         lines.extend(
             [
-                f"#### 第 {rc.get('rank')} 順位：[{rc.get('code')}] {rc.get('title')}",
-                f"- **信心程度：** `{rc.get('confidence')}`（證據等級：`{rc.get('credibility_tier')}`，評估分數：`{rc.get('score')}/100`）",
-                "- **支持證據：**",
+                f"### 第 {rc.get('rank')} 順位：[{rc.get('code')}] {rc.get('title')}",
+                f"- **證據分級：** `{rc.get('evidence_tier')}`",
+                f"- **可追溯原始資料欄位：** `{', '.join(rc.get('evidence_refs') or [])}`",
+                "- **支持觀測：**",
             ]
         )
         for s in rc.get("supporting_evidence") or []:
-            lines.append(f"  - {s}")
-        lines.append("- **反證（不支持此原因之事實）：**")
+            lines.append(f"  - {mask_sensitive_text(str(s))}")
+        lines.append("- **反證或限制說明：**")
         for c in rc.get("counter_evidence") or []:
-            lines.append(f"  - {c}")
+            lines.append(f"  - {mask_sensitive_text(str(c))}")
         if rc.get("pending_checks"):
-            lines.append("- **尚未完成的檢查：**")
+            lines.append("- **待完成驗證：**")
             for p in rc.get("pending_checks") or []:
-                lines.append(f"  - {p}")
+                lines.append(f"  - {mask_sensitive_text(str(p))}")
         lines.append("")
 
     lines.extend(
         [
             "---",
             "",
-            "## 4. 學校網路與個人手機熱點對照實驗（A/B Test）",
+            "## 6. 學校網路（測試 A）與手機熱點（測試 B）科學對照實驗",
             "",
-            f"- **對照完成狀態：** `{ab_comp.get('status', '未測試')}`",
-            f"- **分析結論：** {ab_comp.get('conclusion', '')}",
+            f"- **對照檢核狀態：** `{ab_comp.get('status', STATUS_NOT_TESTED)}`（科學可比性通過：`{ab_comp.get('is_scientifically_comparable', False)}`）",
+            f"- **分析結論：** {mask_sensitive_text(str(ab_comp.get('conclusion', '')))}",
+            "",
+        ]
+    )
+    if ab_comp.get("validation_checks"):
+        lines.extend(
+            [
+                "### 6.1 A/B 可比性前置檢核結果",
+                "",
+                "| 檢核項目 | 通過 | 檢核細節 |",
+                "| --- | --- | --- |",
+            ]
+        )
+        for ch in ab_comp.get("validation_checks") or []:
+            lines.append(
+                f"| `{ch.get('check')}` | `{'PASS' if ch.get('passed') else 'FAIL'}` | {mask_sensitive_text(str(ch.get('detail', '')))} |"
+            )
+        lines.append("")
+
+    lines.extend(
+        [
+            "### 6.2 對照指標表（含每小時標準化事件率）",
             "",
             "| 比較指標 | 測試 A：學校網路 | 測試 B：個人手機熱點 | 差異 (A - B) |",
             "| --- | --- | --- | --- |",
@@ -528,92 +630,89 @@ def generate_research_report_markdown(bundle: Dict[str, Any]) -> str:
             f"| {row.get('metric_name')} | `{row.get('campus_value')}` | `{row.get('hotspot_value')}` | `{row.get('difference_a_minus_b')}` |"
         )
 
-    lines.extend(
-        [
-            "",
-            "---",
-            "",
-            "## 5. 改善建議與網管申請技術佐證清單（依安全性、可行性與預期效果排序）",
-            "",
-            "### 階段一：不需更動學校防火牆的本機與連線排查（優先執行）",
-            "1. **執行學校網路 vs 手機熱點 30 分鐘 A/B 對照實驗（高可行性 / 最高診斷價值）：** 開啟新超級大三元（停留在一般看盤畫面，切勿自動重複登入或送出委託），分別在校園網路與手機熱點執行 `python src/diagnostics.py monitor start`，確認斷線是否僅發生於學校網路。",
-            "2. **排除跨裝置同帳號互踢（零風險 / 常見盲點）：** 測試電腦版期間，暫時關閉手機上「凱基隨身 e 策略」App（包含背景推播重連），避免同一組身分證字號跨設備 Session 互相踢除。",
-            "3. **停用本機網卡省電關閉與睡眠干擾（本機可控 / 安全）：** 於「裝置管理員 -> 網路介面卡 -> 電源管理」取消勾選「允許電腦關閉這個裝置以節省電源」，並避免看盤期間進入螢幕保護後之 Modern Standby 待命。",
-            "4. **優先使用校園有線網路（Ethernet）對照校園 Wi-Fi：** 若使用校園 Wi-Fi（802.1X），多 AP 訊號切換（BSSID 漫遊）與週期性金鑰重協商常造成長連線瞬斷，改插有線網路可立即排除無線漫遊因素。",
-            "",
-            "### 階段二：向學校計中 / 網管單位正式申請連線放行之技術清單（若對照證實與校園網路有關）",
-            "",
-            "> **技術關鍵說明（供學校網管工程師參考）：** 凱基證券「新超級大三元」（Kway HTS 架構，`axis.exe`）雖連線至遠端 TCP `443` 與 `80` 埠，但其傳輸層之上採用證券專屬加密封包協定（`axsock.ocx` / `TS070300`），**並非標準 HTTP 或標準 TLS (HTTPS) 交握**。若校方次世代防火牆（NGFW，如 Palo Alto App-ID、FortiGate Application Control）針對 Port 80/443 啟用「協定合規檢查（Protocol Enforcement / SSL Deep Inspection）」或對未知 TCP 長連線套用極短 Session Timeout，將導致交易/報價連線週期性被切斷或重連。敬請協助確認下列官方伺服器端點之 TCP 長連線放行（Application Override / 免除 SSL 解密與提升 TCP Idle Timeout）：",
-            "",
-            "| 用途說明 | 官方完整網域名稱 (FQDN) | 目前實測解析 IP | 目的端通訊埠 | 傳輸/應用特徵 |",
-            "| --- | --- | --- | --- | --- |",
-        ]
-    )
-    seen_fqdns = set()
-    sorted_for_it = sorted(kgi_probes, key=lambda x: (0 if x.get("port") == 443 else 1))
-    for kp in sorted_for_it:
-        fqdn = kp.get("fqdn", "")
-        if fqdn in seen_fqdns:
-            continue
-        seen_fqdns.add(fqdn)
-        tls_p = kp.get("tls_probe") or {}
-        lines.append(
-            f"| {kp.get('role')} | `{fqdn}` | `{kp.get('primary_ip')}` | `TCP 443, TCP 80` | {tls_p.get('protocol_summary', 'TCP 長連線')} |"
-        )
+    # Section 7: 嚴格三層證據分級彙整
+    confirmed_facts: List[str] = [
+        f"本機安裝檢查：`{'已安裝' if kgi_info.get('is_installed') else '未找到'}`；執行檢查當下凱基程序運行狀態：`{bool(kgi_info.get('is_currently_running'))}`。",
+        f"本機系統 WinINET Proxy 啟用狀態：`{proxy.get('wininet_proxy_enabled', False)}`；針對凱基執行檔之本機防火牆封鎖規則數：`{sum(1 for r in (fw.get('kgi_related_rules') or []) if 'Action=Block' in str(r.get('raw_summary', '')))}`。",
+        f"靜態候選與活躍端點 TCP 探測連通數：`{kgi_analysis.get('tcp_reachable_count', 0)}/{kgi_analysis.get('total_endpoints_tested', 0)}`（未知應用層協定端點數：`{len(kgi_analysis.get('unknown_protocol_endpoints') or [])}`，均誠實標記為 `UNKNOWN`）。",
+    ]
+    conditional_inferences = [
+        f"[{rc.get('code')}] {rc.get('title')}：{'；'.join(rc.get('supporting_evidence') or [])}"
+        for rc in root_causes
+        if rc.get("evidence_tier") == TIER_CONDITIONAL_INFERENCE
+    ]
+    unverified_hypotheses = [
+        f"[{rc.get('code')}] {rc.get('title')}（尚待實測證據驗證，不視為既定事實）"
+        for rc in root_causes
+        if rc.get("evidence_tier") == TIER_UNVERIFIED_HYPOTHESIS
+    ]
 
     lines.extend(
         [
             "",
             "---",
             "",
-            "## 6. 證據可信度分級",
+            "## 7. 三層證據嚴格分級彙整",
             "",
-            "### 6.1 已確認事實（Verified Facts — 100% 經本機實測取證）",
-            f"- 本機確實安裝有凱基證券「新超級大三元」v1.0.5（路徑：`{', '.join(kgi_info.get('install_directories') or [])}`），包含啟動器 `SUPERTSC64.exe` (v2.0.0) 與主引擎 `axis.exe` (v3.0.0.1)，兩者均具備有效之 `KGI Securities Co. Ltd.` 數位簽章。",
-            "- 由安裝目錄靜態設定檔 `tab/YELLOWPAGE.INI` 確認四大核心伺服器端點為：`gtstrade.kgieworld.com.tw`（國內交易）、`gtsquot.kgieworld.com.tw`（國內行情）、`gtsftrade.kgieworld.com.tw`（外期交易）、`gtsfquot.kgieworld.com.tw`（外期行情），設定通訊埠為 `TCP 80` 與 `TCP 443`。",
-            f"- 本機系統 Proxy 啟用狀態為 `{proxy.get('wininet_proxy_enabled', False)}`，Windows 防火牆對凱基執行檔之封鎖規則數為 `0`。",
-            f"- 凱基四大伺服器端點之初次 DNS 解析與 TCP 三方交握在目前網路環境下共 `{kgi_analysis.get('tcp_reachable_count', 0)}/{kgi_analysis.get('total_endpoints_tested', 0)}` 個端點測試連通（平均延遲 `{kgi_analysis.get('avg_tcp_rtt_ms')} ms`）。",
+            "### 7.1 已確認事實（Confirmed Facts）",
         ]
     )
+    for cf in confirmed_facts:
+        lines.append(f"- {mask_sensitive_text(cf)}")
 
-    prop_list = kgi_analysis.get("proprietary_binary_over_443_endpoints") or []
-    if prop_list:
-        lines.append(
-            "- **關鍵協定事實：** 實測凱基交易/行情端點在 `TCP 443` 完成三方交握後，不回應標準 TLS `ClientHello`（而官網 `www.kgieworld.com.tw:443` 則回應標準有效 TLS 憑證），證實交易/行情連線使用**非標準 TLS 之專屬二進位/加密 TCP Socket 協定**。"
-        )
+    lines.extend(["", "### 7.2 有條件支持的推論（Conditionally Supported Inferences）"])
+    if conditional_inferences:
+        for ci in conditional_inferences:
+            lines.append(f"- {mask_sensitive_text(ci)}")
+    else:
+        lines.append("- 目前尚無達到「有條件支持推論」門檻之環境歸因項目（需待開啟交易軟體監控與熱點對照補齊）。")
 
-    lines.extend(
-        [
-            "",
-            "### 6.2 高可信度推論（High-Confidence Inferences）",
-            "- 學校防火牆**並未靜態封鎖（IP/Port Blacklist）**凱基伺服器位址（因 DNS 解析與初次 TCP 80/443 三方交握皆能成功建立）。",
-            "- 若斷線僅發生於連線建立一段時間後，技術上最吻合「Port 80/443 非標準 HTTP/TLS 長連線遭校園防火牆 NGFW 協定檢測 / NAT 狀態表閒置回收」或「區域網路/無線網路瞬斷」。",
-            "",
-            "### 6.3 可能原因（Plausible Causes — 待動態監控收斂）",
-            "- 校園次世代防火牆（NGFW）對 Port 443 非 TLS 流量之深度檢測重置或短連線逾時。",
-            "- 網路介面瞬間重連、校園 Wi-Fi AP 漫遊或網卡省電機制。",
-            "- 同帳號跨裝置（手機看盤 App 與電腦版）Session 互踢或換盤清盤重載。",
-            "",
-            "### 6.4 尚無法判斷（Insufficient Evidence / 未測試項目）",
-            f"- **開啟交易軟體登入狀態下之實際斷線瞬間封包/連線狀態：** `{'已測試' if campus_mon else '未測試（需使用者手動開啟軟體並啟動 monitor）'}`。",
-            f"- **學校網路 vs 個人手機熱點對照實驗：** `{ab_comp.get('status', '未測試')}`。",
-            "- **是否存在明確由校園防火牆注入之長連線中途 TCP RST：** 需於實際斷線發生時段透過監控腳本或經使用者授權之封包檢視確認，目前未觀測到初次交握階段之封鎖回應。",
-            "",
-        ]
-    )
+    lines.extend(["", "### 7.3 尚未驗證假設（Unverified Hypotheses）"])
+    for uh in unverified_hypotheses:
+        lines.append(f"- {mask_sensitive_text(uh)}")
+    lines.append("")
+
     return "\n".join(lines)
 
 
 def generate_html_report(bundle: Dict[str, Any]) -> str:
-    """產生無外部資源依賴、離線安全之視覺化 HTML 診斷報告."""
+    """產生無外部資源依賴、離線安全之視覺化 HTML 診斷報告 (v0.2)."""
     esc = html.escape
     env = bundle.get("network_environment") or {}
     rest = bundle.get("restrictions") or {}
     kgi_probes = bundle.get("kgi_endpoint_probes") or []
     root_causes = bundle.get("root_causes") or []
     ab_comp = bundle.get("ab_comparison") or {}
+    campus_mon = bundle.get("campus_monitor") or {}
+    timeline = bundle.get("event_timeline") or campus_mon.get("event_timeline") or []
+    qa_list = bundle.get("seven_questions") or answer_seven_diagnostic_questions(bundle)
     prim = env.get("primary_connection") or {}
     os_info = env.get("os_and_system") or {}
+
+    qa_rows = []
+    for qa in qa_list:
+        qa_rows.append(
+            f"<tr><td><strong>{esc(str(qa.get('question', '')))}</strong></td>"
+            f"<td>{esc(mask_sensitive_text(str(qa.get('answer', ''))))}</td></tr>"
+        )
+
+    kgi_rows = []
+    for kp in kgi_probes:
+        tls_p = kp.get("tls_probe") or {}
+        ok_cnt = int(kp.get("tcp_ok_count") or 0)
+        tot_cnt = int(kp.get("tcp_probe_count") or 0)
+        st_txt = "TCP可連通" if ok_cnt > 0 else "連線失敗"
+        color = "#15803d" if ok_cnt > 0 else "#b91c1c"
+        kgi_rows.append(
+            f"<tr><td><code>{esc(str(kp.get('endpoint_source', 'static_ini_candidate')))}</code></td>"
+            f"<td><code>{esc(str(kp.get('role', '')))}</code></td>"
+            f"<td><code>{esc(str(kp.get('fqdn', '')))}:{esc(str(kp.get('port', '')))}</code></td>"
+            f"<td>{ok_cnt}/{tot_cnt}</td>"
+            f"<td>{esc(str(kp.get('tcp_avg_ms', '')))} ms</td>"
+            f"<td><span class='badge' style='background:{color}'>{st_txt}</span></td>"
+            f"<td><code>{esc(str(tls_p.get('tls_status', 'TLS_NOT_TESTED')))}</code> / <code>{esc(str(tls_p.get('application_protocol', 'UNKNOWN')))}</code></td>"
+            f"<td>{esc(mask_sensitive_text(str(tls_p.get('detail', ''))))}</td></tr>"
+        )
 
     web_rows = []
     for w in rest.get("websites") or []:
@@ -624,41 +723,43 @@ def generate_html_report(bundle: Dict[str, Any]) -> str:
             f"<td><code>{esc(str(w.get('url', '')))}</code></td>"
             f"<td>{'成功' if w.get('dns_ok') else '失敗'}</td>"
             f"<td>{esc(str(w.get('tcp_success_rate', '')))}</td>"
-            f"<td>{esc(str(w.get('tcp_avg_rtt_ms', '')))} ms</td>"
             f"<td><span class='badge' style='background:{color}'>{esc(cls_txt)}</span></td>"
-            f"<td>{esc(str(w.get('evidence_summary', '')))}</td></tr>"
+            f"<td>{esc(mask_sensitive_text(str(w.get('evidence_summary', ''))))}</td></tr>"
         )
 
-    kgi_rows = []
-    for kp in kgi_probes:
-        tls_p = kp.get("tls_probe") or {}
-        ok_cnt = int(kp.get("tcp_ok_count") or 0)
-        tot_cnt = int(kp.get("tcp_probe_count") or 0)
-        st_txt = "正常連通" if ok_cnt > 0 else "連線失敗"
-        color = "#15803d" if ok_cnt > 0 else "#b91c1c"
-        kgi_rows.append(
-            f"<tr><td><code>{esc(str(kp.get('role', '')))}</code></td>"
-            f"<td><code>{esc(str(kp.get('fqdn', '')))}:{esc(str(kp.get('port', '')))}</code></td>"
-            f"<td><code>{esc(str(kp.get('primary_ip', '')))}</code></td>"
-            f"<td>{ok_cnt}/{tot_cnt}</td>"
-            f"<td>{esc(str(kp.get('tcp_avg_ms', '')))} ms</td>"
-            f"<td><span class='badge' style='background:{color}'>{st_txt}</span></td>"
-            f"<td>{esc(str(tls_p.get('protocol_summary', '')))} — {esc(str(tls_p.get('detail', '')))}</td></tr>"
+    tl_rows = []
+    for ev in timeline[:100]:
+        tier = str(ev.get("confidence_classification", ""))
+        color = _badge_color(tier)
+        tl_rows.append(
+            f"<tr><td><code>{esc(str(ev.get('timestamp', '')))}</code></td>"
+            f"<td><code>{esc(str(ev.get('run_id', '')))}</code></td>"
+            f"<td>{esc(str(ev.get('network_profile', '')))}</td>"
+            f"<td><code>{esc(mask_sensitive_text(str(ev.get('process_identity', ''))))}</code></td>"
+            f"<td><strong>{esc(str(ev.get('event_type', '')))}</strong></td>"
+            f"<td>{esc(mask_sensitive_text(str(ev.get('observed_state', ''))))}</td>"
+            f"<td>{esc(mask_sensitive_text(str(ev.get('supporting_evidence', ''))))}</td>"
+            f"<td>{esc(mask_sensitive_text(str(ev.get('alternative_explanations', ''))))}</td>"
+            f"<td><span class='badge' style='background:{color}'>{esc(tier)}</span></td>"
+            f"<td><code>{esc(str(ev.get('evidence_source', '')))}</code></td></tr>"
         )
+    if not tl_rows:
+        tl_rows.append("<tr><td colspan='10'>目前無觸發之異常或手動標記事件</td></tr>")
 
     rc_cards = []
     for rc in root_causes:
-        conf = str(rc.get("confidence", ""))
-        color = _badge_color(conf)
-        sup_li = "".join(f"<li>{esc(str(s))}</li>" for s in (rc.get("supporting_evidence") or []))
-        cnt_li = "".join(f"<li>{esc(str(c))}</li>" for c in (rc.get("counter_evidence") or []))
+        tier = str(rc.get("evidence_tier", ""))
+        color = _badge_color(tier)
+        sup_li = "".join(f"<li>{esc(mask_sensitive_text(str(s)))}</li>" for s in (rc.get("supporting_evidence") or []))
+        cnt_li = "".join(f"<li>{esc(mask_sensitive_text(str(c)))}</li>" for c in (rc.get("counter_evidence") or []))
+        refs_str = ", ".join(rc.get("evidence_refs") or [])
         rc_cards.append(
             f"<div class='card'>"
             f"<h3>第 {rc.get('rank')} 順位：[{esc(str(rc.get('code')))}] {esc(str(rc.get('title')))} "
-            f"<span class='badge' style='background:{color}'>信心：{esc(conf)} ({rc.get('score')}/100)</span></h3>"
-            f"<p><strong>證據等級：</strong>{esc(str(rc.get('credibility_tier', '')))}</p>"
-            f"<div class='cols'><div><strong>支持證據：</strong><ul>{sup_li}</ul></div>"
-            f"<div><strong>反證：</strong><ul>{cnt_li}</ul></div></div>"
+            f"<span class='badge' style='background:{color}'>{esc(tier)}</span></h3>"
+            f"<p><small>追溯來源：<code>{esc(refs_str)}</code></small></p>"
+            f"<div class='cols'><div><strong>支持觀測：</strong><ul>{sup_li}</ul></div>"
+            f"<div><strong>反證與限制：</strong><ul>{cnt_li}</ul></div></div>"
             f"</div>"
         )
 
@@ -676,58 +777,74 @@ def generate_html_report(bundle: Dict[str, Any]) -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>校園網路與凱基新超級大三元診斷報告</title>
+<title>校園網路與凱基新超級大三元診斷報告 (v0.2)</title>
 <style>
   body {{ font-family: "Microsoft JhengHei", system-ui, sans-serif; background: #f8fafc; color: #0f172a; margin: 0; padding: 24px; line-height: 1.6; }}
-  .container {{ max-width: 1180px; margin: 0 auto; }}
+  .container {{ max-width: 1280px; margin: 0 auto; }}
   header {{ background: #1e293b; color: #fff; padding: 20px 28px; border-radius: 10px; margin-bottom: 24px; }}
   header h1 {{ margin: 0 0 8px 0; font-size: 22px; }}
   header p {{ margin: 4px 0; color: #cbd5e1; font-size: 14px; }}
-  section {{ background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px 24px; margin-bottom: 20px; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }}
+  section {{ background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px 24px; margin-bottom: 20px; box-shadow: 0 1px 2px rgba(0,0,0,0.03); overflow-x: auto; }}
   h2 {{ margin-top: 0; font-size: 18px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; color: #1e3a8a; }}
-  table {{ width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 10px; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }}
   th, td {{ border: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; vertical-align: top; }}
   th {{ background: #f1f5f9; font-weight: 600; }}
-  code {{ background: #f1f5f9; padding: 2px 5px; border-radius: 4px; font-family: Consolas, monospace; font-size: 13px; }}
+  code {{ background: #f1f5f9; padding: 2px 5px; border-radius: 4px; font-family: Consolas, monospace; font-size: 12px; }}
   .badge {{ color: #fff; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; display: inline-block; }}
   .card {{ border: 1px solid #cbd5e1; border-radius: 8px; padding: 14px 18px; margin-bottom: 12px; background: #fcfdff; }}
   .card h3 {{ margin: 0 0 6px 0; font-size: 16px; }}
-  .cols {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; font-size: 14px; }}
+  .cols {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; font-size: 13px; }}
   @media (max-width: 768px) {{ .cols {{ grid-template-columns: 1fr; }} }}
 </style>
 </head>
 <body>
 <div class="container">
   <header>
-    <h1>校園網路與凱基證券「新超級大三元」連線診斷報告</h1>
-    <p>產生時間：{esc(str(bundle.get('generated_at', '')))} ｜ 作業系統：{esc(str(os_info.get('caption', '')))} ｜ 主要介面：{esc(str(prim.get('connection_type', '')))} ({esc(str(prim.get('interface_alias', '')))})</p>
-    <p>安全政策：唯讀、低負載、個人資訊遮罩、離線渲染（無任何外部伺服器連線）</p>
+    <h1>校園網路與凱基證券「新超級大三元」連線診斷報告 (v0.2)</h1>
+    <p>Run ID：{esc(str(bundle.get('run_id', 'N/A')))} ｜ 狀態：{esc(str(bundle.get('overall_status', 'N/A')))} ｜ 產生時間：{esc(str(bundle.get('generated_at', '')))}</p>
+    <p>作業系統：{esc(str(os_info.get('caption', '')))} ｜ 主要介面：{esc(str(prim.get('connection_type', '')))} ({esc(str(prim.get('interface_alias', '')))})</p>
   </header>
 
   <section>
-    <h2>1. 凱基「新超級大三元」實際交易與行情端點檢測</h2>
+    <h2>0. 七大核心診斷問題與實證回答</h2>
     <table>
-      <thead><tr><th>角色</th><th>FQDN:Port</th><th>實測解析 IP</th><th>TCP 成功</th><th>平均延遲</th><th>連通狀態</th><th>協定行為特徵</th></tr></thead>
+      <thead><tr><th style="width:28%">核心問題</th><th>實證回答</th></tr></thead>
+      <tbody>{''.join(qa_rows)}</tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>1. 事件時間線（Event Timeline）</h2>
+    <table>
+      <thead><tr><th>Timestamp</th><th>Run ID</th><th>Profile</th><th>Process</th><th>Event Type</th><th>Observed State</th><th>Supporting Evidence</th><th>Alternative Explanations</th><th>Confidence</th><th>Source</th></tr></thead>
+      <tbody>{''.join(tl_rows)}</tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>2. 凱基端點檢測與協定狀態（不作未驗證專屬協定推論）</h2>
+    <table>
+      <thead><tr><th>來源分類</th><th>角色</th><th>FQDN:Port</th><th>TCP</th><th>平均延遲</th><th>連通狀態</th><th>TLS / 協定判定</th><th>觀測細節</th></tr></thead>
       <tbody>{''.join(kgi_rows)}</tbody>
     </table>
   </section>
 
   <section>
-    <h2>2. 公開網站限制對照檢查</h2>
+    <h2>3. 公開白名單網站限制對照檢查</h2>
     <table>
-      <thead><tr><th>目標</th><th>URL</th><th>DNS</th><th>TCP</th><th>平均延遲</th><th>診斷分類</th><th>證據分析</th></tr></thead>
+      <thead><tr><th>目標</th><th>URL</th><th>DNS</th><th>TCP</th><th>診斷分類</th><th>證據分析</th></tr></thead>
       <tbody>{''.join(web_rows)}</tbody>
     </table>
   </section>
 
   <section>
-    <h2>3. 斷線根本原因決策評估排序（A ~ G）</h2>
+    <h2>4. 可能原因客觀評估（三層證據分級）</h2>
     {''.join(rc_cards)}
   </section>
 
   <section>
-    <h2>4. 學校網路（測試 A）vs 手機熱點（測試 B）對照表</h2>
-    <p><strong>狀態：</strong>{esc(str(ab_comp.get('status', '')))} — {esc(str(ab_comp.get('conclusion', '')))}</p>
+    <h2>5. 學校網路（測試 A）vs 手機熱點（測試 B）科學對照表</h2>
+    <p><strong>狀態：</strong>{esc(str(ab_comp.get('status', '')))} — {esc(mask_sensitive_text(str(ab_comp.get('conclusion', ''))))}</p>
     <table>
       <thead><tr><th>比較指標</th><th>測試 A：學校網路</th><th>測試 B：個人手機熱點</th><th>差異 (A - B)</th></tr></thead>
       <tbody>{''.join(ab_rows)}</tbody>
