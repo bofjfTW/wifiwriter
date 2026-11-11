@@ -64,6 +64,16 @@ from src.noauth import (  # noqa: E402
     write_fubon_eplus_comparison_csv,
     write_noauth_ab_csv,
 )
+from src.fubon_v04 import (  # noqa: E402
+    DEFAULT_DOWNLOAD_DEADLINE_SEC,
+    DEFAULT_FUBON_MAX_DOWNLOAD_MIB,
+    FUBON_EXIT_CODES,
+    FUBON_STATUS_FAILED,
+    FUBON_STATUS_SAFETY_ABORTED,
+    FUBON_STATUS_SUCCESS,
+    generate_campus_network_diagnostic_md,
+    run_fubon_campus_only_workflow,
+)
 from src.report_generator import (  # noqa: E402
     generate_html_report,
     generate_network_environment_markdown,
@@ -1603,11 +1613,16 @@ def cmd_fubon_eplus(
     args: argparse.Namespace,
     logger: logging.Logger,
     base_reports_dir: Path = REPORTS_DIR,
-) -> Dict[str, Any]:
+) -> int:
     """
-    執行「富邦e+電腦版」官方安裝檔雙網路（校園網路 vs 手機行動數據熱點）實測與並排比較 (`fubon-eplus`).
-    嚴格隔離：只使用富邦官方產品頁 (https://www.fbs.com.tw/eplus/pc) 與「下載富邦e+電腦版」Download 按鈕，
-    全程只下載、不安裝、不啟動、不登入，且不混入任何既有凱基測試結果。
+    執行「富邦e+電腦版」官方安裝檔實測 (`fubon-eplus`).
+    支援兩種模式：
+      1. v0.4 `--campus-only` / `--preflight` 校園網路單獨實機診斷模式：
+         - 只測試校園網路，不讀取舊的熱點資料，手機熱點明確標記為 `NOT_TESTED` (`未測`)
+         - 執行環境路由確認、Preflight 來源安全與按鈕解析、單次完整下載三階段獨立驗證、5 輪 × 60 秒低負載穩定性檢查、Windows 事件關聯與 A–J 根因分析
+         - 產出 `campus_network_diagnostic.md`, `.json`, `campus_download_events.csv`, `campus_validation_report.md`
+      2. 雙網路兩輪並排比較模式（第一輪校園網路 vs 第二輪手機熱點）
+    嚴格遵守：全程只下載、不安裝、不啟動、不登入，且回傳確定性非零 Exit Code。
     """
     fubon_root = (
         Path(args.output_dir)
@@ -1615,12 +1630,64 @@ def cmd_fubon_eplus(
         else (base_reports_dir / "fubon_eplus")
     )
     fubon_root.mkdir(parents=True, exist_ok=True)
+
+    campus_only = bool(getattr(args, "campus_only", False))
+    preflight_only = bool(getattr(args, "preflight", False))
+    net_label = str(getattr(args, "network", "campus") or "campus")
+    override_url = str(getattr(args, "override_download_url", "") or "")
+    max_dl_mib = float(getattr(args, "max_download_mib", DEFAULT_FUBON_MAX_DOWNLOAD_MIB))
+    allow_large = bool(getattr(args, "allow_large_download", False))
+    dl_deadline = float(getattr(args, "download_deadline_sec", DEFAULT_DOWNLOAD_DEADLINE_SEC))
+    stab_rounds = int(getattr(args, "stability_rounds", 5))
+    stab_interval = float(getattr(args, "stability_interval", 60.0))
+    skip_stab = bool(getattr(args, "skip_stability", False))
+    confirm_campus = bool(getattr(args, "confirm_campus_network", False))
+
+    if campus_only or preflight_only:
+        if net_label != "campus":
+            logger.error("[fubon-eplus] `--campus-only` 與 `--preflight` 模式僅允許 `--network campus`。")
+            return FUBON_EXIT_CODES[FUBON_STATUS_SAFETY_ABORTED]
+
+        logger.info(
+            "=== 開始執行 wifiwriter v0.4 富邦 e+ 校園網路單獨實機診斷 (CampusOnly=%s, Preflight=%s, MaxMiB=%.1f, Output=%s) ===",
+            campus_only,
+            preflight_only,
+            max_dl_mib,
+            fubon_root,
+        )
+        bundle = run_fubon_campus_only_workflow(
+            output_dir=fubon_root,
+            product_page_url=FUBON_EPLUS_PRODUCT_PAGE_URL,
+            override_download_url=override_url,
+            preflight_only=preflight_only,
+            max_download_mib=max_dl_mib,
+            allow_large_download=allow_large,
+            connect_timeout_sec=min(float(getattr(args, "timeout", 45.0)), 25.0),
+            read_timeout_sec=min(float(getattr(args, "timeout", 45.0)), 30.0),
+            download_deadline_sec=dl_deadline,
+            stability_rounds=stab_rounds,
+            stability_interval_sec=stab_interval,
+            skip_stability=skip_stab,
+            confirm_campus_network=confirm_campus,
+            logger=logger,
+        )
+        md_text = generate_campus_network_diagnostic_md(bundle)
+        print(md_text)
+        exit_code = int(bundle.get("exit_code", FUBON_EXIT_CODES[FUBON_STATUS_FAILED]))
+        logger.info(
+            "=== 富邦 e+ 校園網路診斷結束 (RunID=%s, Status=%s, ExitCode=%d, Report=%s) ===",
+            bundle.get("run_id"),
+            bundle.get("status"),
+            exit_code,
+            (bundle.get("report_files") or {}).get("diagnostic_md"),
+        )
+        return exit_code
+
     campus_latest_path = fubon_root / "latest_campus_round.json"
     hotspot_latest_path = fubon_root / "latest_hotspot_round.json"
+    exit_code = 0
 
     if not getattr(args, "compare_only", False):
-        net_label = str(getattr(args, "network", "campus") or "campus")
-        override_url = str(getattr(args, "override_download_url", "") or "")
         allow_wired = bool(getattr(args, "allow_wired_for_hotspot", False))
 
         logger.info(
@@ -1635,6 +1702,9 @@ def cmd_fubon_eplus(
             override_download_url=override_url,
             timeout_sec=float(getattr(args, "timeout", 45.0)),
             allow_wired_for_hotspot=allow_wired,
+            max_download_mib=max_dl_mib,
+            allow_large_download=allow_large,
+            download_deadline_sec=dl_deadline,
         )
 
         round_dir = Path(str(round_res["round_temp_dir"]))
@@ -1643,7 +1713,10 @@ def cmd_fubon_eplus(
         if not round_res.get("route_check_passed", True):
             warn_msg = str(round_res.get("route_warning") or "預設路由尚未切換至手機行動數據熱點")
             logger.error("[fubon-eplus] %s", warn_msg)
-            raise DiagnosticStepError("fubon_eplus_hotspot_route_check", warn_msg, exit_code=3, details=round_res)
+            raise DiagnosticStepError("fubon_eplus_hotspot_route_check", warn_msg, exit_code=4, details=round_res)
+
+        r_status = str(round_res.get("status") or FUBON_STATUS_FAILED)
+        exit_code = FUBON_EXIT_CODES.get(r_status, 1)
 
         if net_label == "campus":
             save_json_atomic(campus_latest_path, round_res)
@@ -1665,7 +1738,7 @@ def cmd_fubon_eplus(
         fubon_root / "fubon_eplus_report.md",
     )
     print(md_report)
-    return comparison
+    return exit_code
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1765,22 +1838,71 @@ def build_parser() -> argparse.ArgumentParser:
     p_ncmp.add_argument("--hotspot", type=str, default="", help="指定測試 B (hotspot) noauth_diagnostic_report.json 路徑")
     p_ncmp.add_argument("--run-id", type=str, default="", help="自訂對照 Run ID")
 
-    # 12. fubon-eplus (富邦e+電腦版 校園網路 vs 手機行動數據熱點 官方安裝檔完整下載比較)
+    # 12. fubon-eplus (富邦e+電腦版 校園網路單獨診斷 v0.4 與雙網路比較)
     p_fubon = sub.add_parser(
         "fubon-eplus",
-        help="9. 富邦e+電腦版官方安裝檔完整 GET 下載與雙網路比較（全程只下載、不安裝、不啟動、不登入）",
+        help="9. 富邦e+電腦版官方安裝檔完整 GET 下載、三階段驗證與校園網路診斷（全程只下載、不安裝、不啟動、不登入）",
     )
     p_fubon.add_argument(
         "--network",
         choices=["campus", "hotspot"],
         default="campus",
-        help="測試網路：campus（第一輪：校園網路）或 hotspot（第二輪：手機行動數據熱點）",
+        help="測試網路：campus（校園網路）或 hotspot（手機行動數據熱點）",
+    )
+    p_fubon.add_argument(
+        "--campus-only",
+        action="store_true",
+        help="v0.4 僅執行校園網路診斷（不測試手機熱點、不讀取歷史熱點資料，將熱點標記為 NOT_TESTED / 未測）",
+    )
+    p_fubon.add_argument(
+        "--preflight",
+        action="store_true",
+        help="v0.4 僅執行 Phase A 下載前連通性、來源安全與按鈕解析預檢（不執行完整安裝包下載）",
+    )
+    p_fubon.add_argument(
+        "--max-download-mib",
+        type=float,
+        default=DEFAULT_FUBON_MAX_DOWNLOAD_MIB,
+        help="完整安裝檔下載預設容量上限 MiB（預設 200 MiB）",
+    )
+    p_fubon.add_argument(
+        "--allow-large-download",
+        action="store_true",
+        help="明確允許下載超過 --max-download-mib 上限之安裝檔",
+    )
+    p_fubon.add_argument(
+        "--download-deadline-sec",
+        type=float,
+        default=DEFAULT_DOWNLOAD_DEADLINE_SEC,
+        help="單次完整下載整體時間上限秒數（預設 180 秒）",
+    )
+    p_fubon.add_argument(
+        "--stability-rounds",
+        type=int,
+        default=5,
+        help="Phase C 低負載穩定性檢查次數（預設 5 次，不重複下載安裝檔）",
+    )
+    p_fubon.add_argument(
+        "--stability-interval",
+        type=float,
+        default=60.0,
+        help="Phase C 低負載穩定性檢查間隔秒數（預設 60 秒）",
+    )
+    p_fubon.add_argument(
+        "--skip-stability",
+        action="store_true",
+        help="略過 Phase C 多輪低負載穩定性檢查",
+    )
+    p_fubon.add_argument(
+        "--confirm-campus-network",
+        action="store_true",
+        help="當校園環境使用 RFC1918 NAT 內網 IP 時，明確確認目前位於校園網路",
     )
     p_fubon.add_argument(
         "--override-download-url",
         type=str,
         default="",
-        help="若官方頁面改版無法自動解析按鈕，可手動傳入從瀏覽器「下載富邦e+電腦版」按鈕取得的實際下載網址",
+        help="若官方頁面改版無法自動解析按鈕，可手動傳入從瀏覽器「下載富邦e+電腦版」按鈕取得的實際下載網址（仍須通過富邦網域與 HTTPS 安全檢查）",
     )
     p_fubon.add_argument(
         "--compare-only",
@@ -1827,7 +1949,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         elif args.command == "noauth-compare":
             cmd_noauth_compare(args, logger)
         elif args.command == "fubon-eplus":
-            cmd_fubon_eplus(args, logger)
+            return cmd_fubon_eplus(args, logger)
         return 0
     except DiagnosticStepError as exc:
         logger.error("[%s] %s", exc.step, exc)

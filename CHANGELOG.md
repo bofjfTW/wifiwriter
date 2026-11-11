@@ -4,6 +4,22 @@
 
 ---
 
+## [v0.4.0] — 2026-11-11
+
+### 新增功能 (`Added`)
+- **富邦 e+ 校園網路實機診斷 v0.4 (`src/fubon_v04.py`)**：Phase A Preflight、單次完整下載三階段驗證（傳輸 / PE + SHA-256 / Authenticode）、Phase C 低負載穩定性多輪檢查、Phase D Windows 事件唯讀關聯、A–J 根因分析報告；私有原始報告輸出至專案外目錄。
+- **去識別化實測報告** `docs/field-tests/2026-11-11-campus-fubon/`（`summary.md`、`evidence.json`），Run ID `fubon_v04_campus_20261111_122058`。
+- **專案 Skill `github-safe-sync`**（`.agents/skills/github-safe-sync/`）：測試 → 隱私掃描 → 明確路徑 Commit → 推送功能分支 → 遠端 SHA 驗證 → PR。
+- `AGENTS.md` 新增 `Mandatory GitHub Safe Sync` 規範。
+- 新增 `tests/test_fubon_v04.py`、`tests/test_github_safe_sync.py`（含暫存 Git repo + 本地 bare remote 之同步流程測試）。
+
+### 修正與強化 (`Changed` / `Fixed`)
+- `src/privacy.py`：白名單只額外開放 `.agents/skills/github-safe-sync/`；任何路徑下之原始診斷報告檔名一律拒絕；新增拒絕 `.zip`、`.csv`、`.jsonl`、`.tmp`、`.partial`；新增 `--repo-root` 參數。
+- `src/privacy.py`：修正 IP 掃描之版本號排除規則過寬（前文含任一字母 `v` 即略過，例如 `server <IP>`）造成漏報。
+- `scripts/sync_github.ps1`：驗證 `origin` URL、提交前執行測試、推送前檢查遠端分歧（禁止 force push）、推送後以 `git ls-remote` 驗證遠端 SHA，並以不同 exit code 區分失敗原因；工作樹乾淨時跳過、不建立空 Commit。
+
+---
+
 ## [v0.3.0] — 2026-11-11
 
 ### 新增功能 (`Added`)
@@ -39,3 +55,4 @@
 
 ### 初始版本
 - 建立 Windows 校園網路環境唯讀蒐集、公開網站與連線限制檢查基礎架構。
+

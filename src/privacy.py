@@ -63,7 +63,25 @@ GIT_ALLOWED_PREFIXES = (
     "docs/",
     "tests/",
     ".github/",
+    ".agents/skills/github-safe-sync/",
 )
+
+GIT_FORBIDDEN_RAW_REPORT_BASENAMES = {
+    "campus_network_diagnostic.json",
+    "campus_network_diagnostic.md",
+    "campus_download_events.csv",
+    "campus_validation_report.md",
+    "fubon_eplus_network_report.json",
+    "fubon_eplus_network_report.md",
+    "fubon_eplus_download_events.csv",
+    "noauth_diagnostic_report.json",
+    "noauth_diagnostic_report.md",
+    "noauth_connection_events.csv",
+    "network_environment.json",
+    "network_environment.md",
+    "restriction_indicators.json",
+    "kgi_endpoints.json",
+}
 
 GIT_FORBIDDEN_EXTENSIONS = {
     ".pfx",
@@ -81,7 +99,12 @@ GIT_FORBIDDEN_EXTENSIONS = {
     ".pyc",
     ".exe",
     ".msi",
+    ".zip",
+    ".tmp",
     ".part",
+    ".partial",
+    ".csv",
+    ".jsonl",
 }
 
 
@@ -406,7 +429,7 @@ def scan_text_for_sensitive_data(
             ip_candidate = ipm.group(1)
             # 排除明顯為軟體四段版本號之情境 (如 v3.0.0.1 或 FileVersion 10.0.19041.1)
             prefix_ctx = line[max(0, ipm.start() - 18) : ipm.start()].lower()
-            if any(w in prefix_ctx for w in ("v", "ver", "version", "build")):
+            if re.search(r"(?:\bv|\bver|version|build|fileversion|productversion)[\s:=_\-\"']*$", prefix_ctx):
                 continue
             if is_sensitive_client_or_internal_ipv4(ip_candidate):
                 findings.append(
@@ -436,6 +459,8 @@ def is_path_allowed_for_git(rel_posix_path: str) -> Tuple[bool, str]:
 
     if norm in ("network_environment.json", "network_environment.md"):
         return False, "本機網路環境快照不得提交至 GitHub"
+    if Path(norm).name.lower() in GIT_FORBIDDEN_RAW_REPORT_BASENAMES:
+        return False, f"原始診斷報告或本機環境快照檔 `{Path(norm).name}` 不得提交至 GitHub（公開報告請使用去識別化之 docs/field-tests/.../summary.md 與 evidence.json）"
     if norm.startswith("reports/") and norm != "reports/.gitkeep":
         return False, "reports/ 下的原始或遮罩診斷產物不得提交至 GitHub（僅允許 reports/.gitkeep）"
     if norm == "config/targets.json" or norm.endswith(".local.json") or norm.endswith(".user.json"):
@@ -542,11 +567,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         default=[],
         help="指定要掃描之相對檔案路徑清單",
     )
+    parser.add_argument(
+        "--repo-root",
+        default="",
+        help="指定 Git 儲存庫根目錄（預設為本專案根目錄）",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
+    repo_root = Path(args.repo_root).resolve() if args.repo_root else PROJECT_ROOT
 
     target_files: List[str] = []
     if args.check_staged:
-        target_files.extend(get_git_staged_files(PROJECT_ROOT))
+        target_files.extend(get_git_staged_files(repo_root))
     if args.files:
         target_files.extend(args.files)
 
@@ -554,7 +585,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         # 預設掃描目前所有 git ls-files 已追蹤檔案
         proc = subprocess.run(
             ["git", "ls-files"],
-            cwd=str(PROJECT_ROOT),
+            cwd=str(repo_root),
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -563,7 +594,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         target_files = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
 
-    result = scan_files_for_git(target_files, repo_root=PROJECT_ROOT)
+    result = scan_files_for_git(target_files, repo_root=repo_root)
     if result["passed"]:
         print(f"OK: Privacy scan passed ({result['checked_files']} files verified, 0 violations).")
         return 0

@@ -1,0 +1,88 @@
+{
+  "schema_version": "1.0",
+  "test_date": "2026-11-11",
+  "run_id": "fubon_v04_campus_20261111_122058",
+  "started_at_tw": "2026-11-11 12:20:58 +08:00",
+  "finished_at_tw": "2026-11-11 12:25:16 +08:00",
+  "git_commit": "f89f1eb",
+  "git_commit_note": "Base commit of branch fix/fubon-campus-diagnostics-v04; v0.4 code was run from the working tree and committed afterwards on the same branch.",
+  "git_branch": "fix/fubon-campus-diagnostics-v04",
+  "environment_label": "TANet_Campus_Wired_Ethernet_1Gbps_DirectAccess",
+  "client_ip_masked": "163.xxx.xxx.xxx",
+  "proxy_or_vpn_detected": false,
+  "application_name": "富邦e+電腦版 (Fubon e+ PC)",
+  "product_page": {
+    "url": "https://www.fbs.com.tw/eplus/pc",
+    "http_status": 200,
+    "elapsed_ms": 48.52,
+    "download_button_url": "https://www.fbs.com.tw/wcm/new_web/download_app/FB_ePlus_setup.exe"
+  },
+  "download_transport_status": "COMPLETE",
+  "download_verdict": "VERIFIED_OFFICIAL_INSTALLER",
+  "downloaded_bytes": 77822080,
+  "content_length": 77822080,
+  "size_matched": true,
+  "download_duration_s": 7.88,
+  "average_throughput_mbps": 79.01,
+  "full_download_attempts": 1,
+  "sha256": "2beb299444912762264ab8ddb036f63a177a570e9451d48aa32b93fb1cbb6894",
+  "pe_valid": true,
+  "pe_machine": "x86 (IMAGE_FILE_MACHINE_I386)",
+  "signature_status": "Valid",
+  "signer": "CN=富邦綜合證券股份有限公司, O=富邦綜合證券股份有限公司, L=Taipei, S=Taipei, C=TW",
+  "signer_issuer": "CN=GlobalSign GCC R45 CodeSigning CA 2020, O=GlobalSign nv-sa, C=BE",
+  "dns_results": {
+    "fqdn": "www.fbs.com.tw",
+    "resolved": ["210.208.96.55"],
+    "preflight_ms": 0.2,
+    "stability_success_rate_pct": 100.0,
+    "stability_rounds": 5
+  },
+  "tcp_results": {
+    "target": "210.208.96.55:443",
+    "preflight_rtt_ms": 3.74,
+    "stability": [
+      {"label": "fubon_product_page", "success_rate_pct": 100.0, "avg_ms": 28.04, "max_ms": 42.42},
+      {"label": "fubon_installer_head", "success_rate_pct": 100.0, "avg_ms": 20.89, "max_ms": 29.13},
+      {"label": "control_microsoft", "success_rate_pct": 100.0, "avg_ms": 22.57, "max_ms": 30.71},
+      {"label": "control_github", "success_rate_pct": 100.0, "avg_ms": 59.44, "max_ms": 95.92}
+    ]
+  },
+  "tls_results": {
+    "version": "TLSv1.2",
+    "cipher": "DHE-RSA-AES256-GCM-SHA384",
+    "handshake_ms": 18.75,
+    "issuer": "TWCA SSL Certification Authority (TAIWAN-CA, TW)",
+    "subject_cn": "www.fbs.com.tw",
+    "mitm_cert_suspected": false,
+    "stability_success_rate_pct": 100.0
+  },
+  "http_results": {
+    "head": {"status": 200, "elapsed_ms": 36.79, "content_length": 77822080, "accept_ranges": "bytes", "content_type": "application/octet-stream"},
+    "get": {"status": 200, "redirect_hops": 0, "is_html_block_page": false},
+    "stability_head_success_rate_pct": 100.0
+  },
+  "error_counts": {
+    "dns": 0,
+    "tcp": 0,
+    "tls": 0,
+    "http": 0,
+    "download": 0,
+    "windows_dns_1014_timeouts": 0,
+    "windows_nic_disconnects": 0,
+    "windows_network_profile_changes": 0,
+    "windows_sleep_wake": 0
+  },
+  "incomplete_checks": [
+    "mobile_hotspot_ab_comparison: NOT_TESTED",
+    "windows_security_5152_5157_packet_drop_audit: NOT_COLLECTED (requires Administrator; not elevated by policy)",
+    "application_launch_and_login_connections: NOT_TESTED (no install / no launch / no login policy)"
+  ],
+  "evidence_limitations": [
+    "Download success over HTTPS 443 does not prove post-login trading/quote long connections are stable.",
+    "Stability window was about 4 minutes (5 rounds x 60 s) of short-lived probes; long idle NAT timeouts are not covered.",
+    "Only www.fbs.com.tw was tested; application-specific quote/order servers and non-443 ports were not observed.",
+    "Without a hotspot control run, server-side vs. campus-side causes cannot be cross-separated for future anomalies."
+  ]
+}
+

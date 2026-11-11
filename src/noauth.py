@@ -1540,11 +1540,17 @@ def extract_fubon_eplus_download_url(
     has_button_id = bool(re.search(r'id=["\']download_pc_app["\']', text, re.IGNORECASE))
 
     manual_instructions = (
-        "若程式無法自動解析按鈕連結，請在瀏覽器開啟 https://www.fbs.com.tw/eplus/pc ，"
+        "如何在瀏覽器手動取得實際下載網址：請在瀏覽器開啟 https://www.fbs.com.tw/eplus/pc ，"
         "找到「下載富邦e+電腦版」下方的「Download」按鈕並點擊一次；"
         "接著在瀏覽器按 Ctrl+J 開啟「下載」清單，對剛開始下載的項目按右鍵選擇「複製下載連結」，"
         "再使用 `--override-download-url <複製的網址>` 參數繼續執行測試。"
     )
+
+    ignored_other_links: List[str] = []
+    for href_m in re.finditer(r'href\s*=\s*["\']([^"\']+)["\']', text, re.IGNORECASE):
+        h_val = href_m.group(1).strip()
+        if FUBON_FORBIDDEN_SUBSTITUTE_PATTERNS.search(h_val):
+            ignored_other_links.append(h_val)
 
     candidate_raw_url = ""
     extraction_method = ""
@@ -1596,14 +1602,29 @@ def extract_fubon_eplus_download_url(
                 candidate_raw_url = attr_match.group(1).strip()
                 extraction_method = "dom_attribute_#download_pc_app"
 
+    # 3. 備援：檢查「下載富邦e+電腦版」標題區塊緊鄰之 Download 連結
+    if not candidate_raw_url and has_section_label:
+        sec_idx = text.find("下載富邦e+電腦版")
+        sec_window = text[sec_idx : sec_idx + 1500]
+        anchor_m = re.search(
+            r'<a\b[^>]*href\s*=\s*["\']([^"\']+\.exe(?:\?[^"\']*)?)["\'][^>]*>\s*Download\s*</a>',
+            sec_window,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if anchor_m:
+            candidate_raw_url = anchor_m.group(1).strip()
+            extraction_method = "section_download_anchor"
+
     if not candidate_raw_url:
         return {
+            "found": False,
             "button_found": has_section_label and has_button_id,
             "has_section_label": has_section_label,
             "has_button_id": has_button_id,
             "download_url": "",
             "raw_button_target": "",
             "file_name": "",
+            "ignored_other_links": ignored_other_links,
             "extraction_method": "failed",
             "error": "無法從產品頁解析「下載富邦e+電腦版」Download 按鈕之實際下載連結（絕不猜測檔名或代測其他元件）",
             "browser_manual_instructions": manual_instructions,
@@ -1613,27 +1634,31 @@ def extract_fubon_eplus_download_url(
     parsed = urllib.parse.urlsplit(abs_url)
     file_name = Path(parsed.path).name
 
-    # 3. 嚴格檢查是否誤抓 Microsoft VC++ 元件、e01、行動版、PDF 或憑證工具
+    # 4. 嚴格檢查是否誤抓 Microsoft VC++ 元件、e01、行動版、PDF 或憑證工具
     if FUBON_FORBIDDEN_SUBSTITUTE_PATTERNS.search(abs_url) or FUBON_FORBIDDEN_SUBSTITUTE_PATTERNS.search(file_name):
         return {
+            "found": False,
             "button_found": has_section_label and has_button_id,
             "has_section_label": has_section_label,
             "has_button_id": has_button_id,
             "download_url": "",
             "raw_button_target": candidate_raw_url,
             "file_name": file_name,
+            "ignored_other_links": ignored_other_links,
             "extraction_method": extraction_method,
             "error": f"解析到的連結 ({abs_url}) 屬於被排除的非富邦e+電腦版主程式（如 Microsoft 元件/e01/行動版/手冊），已依規範拒絕代測",
             "browser_manual_instructions": manual_instructions,
         }
 
     return {
+        "found": True,
         "button_found": True,
         "has_section_label": has_section_label,
         "has_button_id": has_button_id,
         "download_url": abs_url,
         "raw_button_target": candidate_raw_url,
         "file_name": file_name,
+        "ignored_other_links": ignored_other_links,
         "source_host": parsed.netloc,
         "extraction_method": extraction_method,
         "error": "",
@@ -1822,19 +1847,38 @@ def run_fubon_eplus_round(
     override_download_url: str = "",
     timeout_sec: float = 30.0,
     allow_wired_for_hotspot: bool = False,
+    max_download_mib: float = 200.0,
+    allow_large_download: bool = False,
+    download_deadline_sec: float = 180.0,
 ) -> Dict[str, Any]:
     """
     執行單輪「富邦e+電腦版」官方產品頁開啟與官方安裝檔完整 GET 下載實測.
     嚴格遵守：
       - 全程只下載，不安裝、不啟動、不登入。
       - 分開記錄「官方產品頁能否開啟」與「安裝檔能否完整取得」。
+      - 獨立計算三階段驗證：`transport_complete`, `artifact_integrity_verified`, `publisher_verified`。
+      - 驗證來源與轉址安全性（僅允許 HTTPS 與富邦授信網域，拒絕 Loopback/內網與超額大小）。
       - 每次下載至全新本機暫存子目錄，帶入 no-cache 標頭，絕不沿用快取。
       - 若為第二輪 hotspot，自動檢查預設路由是否仍走校園有線網路。
     """
+    from src.fubon_v04 import (
+        FUBON_STATUS_ENVIRONMENT_UNCONFIRMED,
+        FUBON_STATUS_FAILED,
+        FUBON_STATUS_SAFETY_ABORTED,
+        FUBON_STATUS_SUCCESS,
+        FubonSafetyAbortError,
+        _SafeFubonRedirectHandler,
+        evaluate_three_stage_download_verification,
+        inspect_pe_binary_structure,
+        validate_fubon_download_url_security,
+    )
+
     ts_slug = datetime.now().strftime("%Y%m%d_%H%M%S")
     round_num = 1 if network_label == "campus" else 2
     round_dir = base_output_dir / f"round{round_num}_{network_label}_{ts_slug}"
     round_dir.mkdir(parents=True, exist_ok=True)
+    quarantine_dir = round_dir / "quarantine"
+    quarantine_dir.mkdir(parents=True, exist_ok=True)
 
     route_info = inspect_active_default_route(target_host="www.fbs.com.tw")
 
@@ -1848,6 +1892,7 @@ def run_fubon_eplus_round(
         "route_verification": route_info,
         "route_check_passed": True,
         "route_warning": "",
+        "status": FUBON_STATUS_FAILED,
         # 1. 官方產品頁能否開啟（獨立記錄）
         "product_page": {
             "url": product_page_url,
@@ -1864,7 +1909,7 @@ def run_fubon_eplus_round(
             "error_raw": "",
             "browser_manual_instructions": "",
         },
-        # 2. 安裝檔能否完整取得（獨立記錄，含 HEAD 探測與完整 GET 下載）
+        # 2. 安裝檔能否完整取得（獨立記錄，含 HEAD 探測與完整 GET 下載 + 三階段驗證）
         "installer_download": {
             "requested_url": "",
             "final_url": "",
@@ -1892,7 +1937,11 @@ def run_fubon_eplus_round(
                 "signer_issuer": "",
                 "cert_not_after": "",
             },
+            "transport_complete": False,
+            "artifact_integrity_verified": False,
+            "publisher_verified": False,
             "saved_file_path": "",
+            "quarantined_file_path": "",
             "installer_complete_ok": False,
             "failure_stage": "",
             "error_raw": "",
@@ -1902,6 +1951,7 @@ def run_fubon_eplus_round(
     # 若指定為 hotspot 第二輪，確認預設路由是否真的走手機熱點而非校園有線網路
     if network_label == "hotspot" and route_info.get("is_campus_wired_default_route") and not allow_wired_for_hotspot:
         record["route_check_passed"] = False
+        record["status"] = FUBON_STATUS_ENVIRONMENT_UNCONFIRMED
         warn_msg = (
             f"偵測到目前預設路由 (0.0.0.0/0) 仍為校園有線網路介面 "
             f"'{route_info.get('primary_interface_alias')}' (IP: {route_info.get('primary_ipv4')}, "
@@ -1915,6 +1965,16 @@ def run_fubon_eplus_round(
         record["installer_download"]["error_raw"] = warn_msg
         return record
 
+    # 來源產品頁安全驗證
+    page_sec = validate_fubon_download_url_security(product_page_url)
+    if not page_sec.get("security_ok"):
+        record["status"] = FUBON_STATUS_SAFETY_ABORTED
+        record["product_page"]["error_stage"] = str(page_sec.get("failure_stage") or "UNSAFE_PRODUCT_PAGE_URL")
+        record["product_page"]["error_raw"] = str(page_sec.get("reject_reason") or "產品頁網址未通過安全檢查")
+        record["installer_download"]["failure_stage"] = record["product_page"]["error_stage"]
+        record["installer_download"]["error_raw"] = record["product_page"]["error_raw"]
+        return record
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) wifiwriter-fubon-eplus-diag/1.0",
         "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -1924,12 +1984,14 @@ def run_fubon_eplus_round(
     # -------------------------------------------------------------------------
     # 階段 A：開啟富邦證券官方產品頁 https://www.fbs.com.tw/eplus/pc 並解析按鈕
     # -------------------------------------------------------------------------
+    page_redirects: List[Dict[str, Any]] = []
+    page_opener = urllib.request.build_opener(_SafeFubonRedirectHandler(page_redirects))
     page_t0 = time.perf_counter()
     html_text = ""
     try:
         req_page = urllib.request.Request(product_page_url, headers=headers, method="GET")
-        with urllib.request.urlopen(req_page, timeout=timeout_sec) as resp:
-            page_bytes = resp.read()
+        with page_opener.open(req_page, timeout=timeout_sec) as resp:
+            page_bytes = resp.read(524288)
             page_elapsed = round(time.perf_counter() - page_t0, 3)
             final_page_url = resp.geturl()
             final_page_host = urllib.parse.urlsplit(final_page_url).netloc
@@ -1951,6 +2013,13 @@ def run_fubon_eplus_round(
                 record["product_page"]["error_raw"] = (
                     f"HTTP {status_code} ({ct_hdr})，但回應內容非預期的富邦e+電腦版官方產品頁"
                 )
+    except FubonSafetyAbortError as exc:
+        record["status"] = FUBON_STATUS_SAFETY_ABORTED
+        record["product_page"]["error_stage"] = exc.stage
+        record["product_page"]["error_raw"] = str(exc)
+        record["installer_download"]["failure_stage"] = exc.stage
+        record["installer_download"]["error_raw"] = str(exc)
+        return record
     except Exception as exc:
         page_elapsed = round(time.perf_counter() - page_t0, 3)
         record["product_page"]["elapsed_seconds"] = page_elapsed
@@ -1980,25 +2049,44 @@ def run_fubon_eplus_round(
         record["product_page"]["extracted_download_url"] = target_dl_url
         record["product_page"]["extracted_file_name"] = str(ext_res.get("file_name") or "FB_ePlus_setup.exe")
 
+    # 嚴格驗證下載網址安全性（絕不自動信任任意手動網址或非富邦網域）
+    dl_sec = validate_fubon_download_url_security(target_dl_url)
+    if not dl_sec.get("security_ok"):
+        record["status"] = FUBON_STATUS_SAFETY_ABORTED
+        record["installer_download"]["failure_stage"] = str(dl_sec.get("failure_stage") or "UNSAFE_DOWNLOAD_URL")
+        record["installer_download"]["error_raw"] = str(dl_sec.get("reject_reason") or "下載網址安全檢查未通過")
+        return record
+
     # -------------------------------------------------------------------------
     # 階段 B-1：先執行低負載 HTTP HEAD 標頭檢查（記錄標頭狀態，但不算完整下載成功）
     # -------------------------------------------------------------------------
     inst = record["installer_download"]
     inst["requested_url"] = target_dl_url
     file_name = record["product_page"]["extracted_file_name"] or "FB_ePlus_setup.exe"
+    if not file_name.lower().endswith(".exe"):
+        file_name = "FB_ePlus_setup.exe"
     dest_file = round_dir / file_name
-    tmp_file = round_dir / f"{file_name}.part"
+    tmp_file = quarantine_dir / f"{file_name}.part"
+    sig_check_file = quarantine_dir / f".sigcheck_{file_name}"
+    unverified_bin_file = quarantine_dir / f"{file_name}.unverified.bin"
 
+    head_redirects: List[Dict[str, Any]] = []
+    head_opener = urllib.request.build_opener(_SafeFubonRedirectHandler(head_redirects))
     head_t0 = time.perf_counter()
     try:
         req_head = urllib.request.Request(target_dl_url, headers=headers, method="HEAD")
-        with urllib.request.urlopen(req_head, timeout=timeout_sec) as h_resp:
+        with head_opener.open(req_head, timeout=timeout_sec) as h_resp:
             inst["head_status"] = int(getattr(h_resp, "status", 200))
             inst["head_elapsed_seconds"] = round(max(0.001, time.perf_counter() - head_t0), 3)
             inst["accept_ranges"] = str(h_resp.headers.get("Accept-Ranges") or "")
             h_clen = h_resp.headers.get("Content-Length")
             if h_clen is not None and str(h_clen).strip().isdigit():
                 inst["head_content_length_bytes"] = int(str(h_clen).strip())
+    except FubonSafetyAbortError as exc:
+        record["status"] = FUBON_STATUS_SAFETY_ABORTED
+        inst["failure_stage"] = exc.stage
+        inst["error_raw"] = str(exc)
+        return record
     except urllib.error.HTTPError as exc:
         inst["head_status"] = int(exc.code)
         inst["head_elapsed_seconds"] = round(max(0.001, time.perf_counter() - head_t0), 3)
@@ -2006,8 +2094,11 @@ def run_fubon_eplus_round(
         inst["head_elapsed_seconds"] = round(max(0.001, time.perf_counter() - head_t0), 3)
 
     # -------------------------------------------------------------------------
-    # 階段 B-2：使用完整 HTTP GET 將官方安裝檔下載至全新本機暫存目錄
+    # 階段 B-2：使用完整 HTTP GET 將官方安裝檔下載至隔離暫存區並執行三階段驗證
     # -------------------------------------------------------------------------
+    dl_redirects: List[Dict[str, Any]] = []
+    dl_opener = urllib.request.build_opener(_SafeFubonRedirectHandler(dl_redirects))
+    max_bytes = int(max_download_mib * 1024 * 1024)
     dl_t0 = time.perf_counter()
     inst["taiwan_time"] = format_taiwan_time()
     sha256_hasher = hashlib.sha256()
@@ -2015,89 +2106,128 @@ def run_fubon_eplus_round(
     first_chunk = b""
     clen_val: Optional[int] = None
     ct_header = ""
+    cr_header = ""
+    stream_completed_cleanly = False
 
     try:
         req_dl = urllib.request.Request(target_dl_url, headers=headers, method="GET")
-        with urllib.request.urlopen(req_dl, timeout=timeout_sec) as resp:
+        with dl_opener.open(req_dl, timeout=timeout_sec) as resp:
             inst["http_status"] = int(getattr(resp, "status", 200))
             inst["final_url"] = resp.geturl()
             inst["final_host"] = urllib.parse.urlsplit(inst["final_url"]).netloc
             ct_header = str(resp.headers.get("Content-Type") or "")
+            cr_header = str(resp.headers.get("Content-Range") or "")
             raw_clen = resp.headers.get("Content-Length")
             if raw_clen is not None and str(raw_clen).strip().isdigit():
                 clen_val = int(str(raw_clen).strip())
                 inst["content_length_bytes"] = clen_val
+                if clen_val > max_bytes and not allow_large_download:
+                    raise FubonSafetyAbortError(
+                        "MAX_DOWNLOAD_SIZE_EXCEEDED",
+                        f"Content-Length ({clen_val:,} bytes) 超過安全上限 {max_download_mib} MiB",
+                    )
 
             with tmp_file.open("wb") as out_f:
                 while True:
-                    chunk = resp.read(262144)
+                    if (time.perf_counter() - dl_t0) > download_deadline_sec:
+                        raise TimeoutError(f"DOWNLOAD_DEADLINE_EXCEEDED: 超過下載期限 {download_deadline_sec} 秒")
+                    chunk = resp.read(65536)
                     if not chunk:
+                        stream_completed_cleanly = True
                         break
-                    if len(first_chunk) < 4096:
-                        need = 4096 - len(first_chunk)
+                    total_read += len(chunk)
+                    if total_read > max_bytes and not allow_large_download:
+                        raise FubonSafetyAbortError(
+                            "MAX_DOWNLOAD_SIZE_EXCEEDED",
+                            f"已接收位元組 ({total_read:,} bytes) 超過安全上限 {max_download_mib} MiB",
+                        )
+                    if len(first_chunk) < 8192:
+                        need = 8192 - len(first_chunk)
                         first_chunk += chunk[:need]
                     out_f.write(chunk)
                     sha256_hasher.update(chunk)
-                    total_read += len(chunk)
 
         dl_elapsed = round(max(0.001, time.perf_counter() - dl_t0), 3)
         inst["elapsed_seconds"] = dl_elapsed
         inst["received_bytes"] = total_read
 
         if tmp_file.exists():
-            os.replace(tmp_file, dest_file)
-            inst["saved_file_path"] = str(dest_file)
+            os.replace(tmp_file, sig_check_file)
 
-        # 辨識檔案類型（檢查是否為 PE EXE 或 HTML 登入頁／攔阻頁）
+        # 辨識檔案類型與 PE 結構
         ftype_info = classify_downloaded_file_content(
             first_bytes=first_chunk,
             content_type_header=ct_header,
             total_bytes=total_read,
             file_name=file_name,
         )
+        pe_info = inspect_pe_binary_structure(first_chunk, file_path=sig_check_file)
         inst["file_type"] = ftype_info["file_type_label"]
-        inst["is_windows_executable"] = ftype_info["is_windows_executable"]
+        inst["is_windows_executable"] = bool(pe_info.get("is_valid_pe_structure"))
         inst["is_html_login_or_block_page"] = ftype_info["is_html_login_or_block_page"]
         inst["is_small_bootstrapper"] = ftype_info["is_small_bootstrapper"]
-        if ftype_info["is_small_bootstrapper"]:
+        if ftype_info["is_small_bootstrapper"] and pe_info.get("is_valid_pe_structure"):
             inst["bootstrapper_note"] = (
                 f"本次取得之 {file_name} ({total_read:,} bytes, 約 {round(total_read / (1024 * 1024), 2)} MiB) "
                 "為小型安裝啟動器 (Setup Bootstrapper)，已完整取得該啟動器（依規範不執行亦不觸發後續安裝）。"
             )
 
-        # 核對 Content-Length
         if clen_val is not None:
             inst["size_matched"] = (total_read == clen_val)
         else:
             inst["size_matched"] = None
 
-        # 判斷是否算「安裝檔完整取得成功」
-        if not (200 <= inst["http_status"] < 300):
-            inst["installer_complete_ok"] = False
-            inst["failure_stage"] = f"HTTP_STATUS_{inst['http_status']}"
-            inst["error_raw"] = f"HTTP 狀態碼非 200 OK (Status={inst['http_status']})"
-        elif ftype_info["is_html_login_or_block_page"]:
-            inst["installer_complete_ok"] = False
-            inst["failure_stage"] = "HTML_LOGIN_OR_BLOCK_PAGE_INTERCEPTED"
-            preview_txt = first_chunk[:240].decode("utf-8", errors="replace").strip()
-            inst["error_raw"] = f"收到 HTTP 200 但內容為 HTML 網頁（疑似登入頁或攔阻頁）：{preview_txt}"
-        elif not ftype_info["is_windows_executable"]:
-            inst["installer_complete_ok"] = False
-            inst["failure_stage"] = "UNEXPECTED_NON_EXECUTABLE_CONTENT"
-            inst["error_raw"] = f"收到之檔案非 Windows 可執行檔 ({ftype_info['file_type_label']})"
-        elif clen_val is not None and total_read != clen_val:
-            inst["installer_complete_ok"] = False
-            inst["failure_stage"] = "CONTENT_LENGTH_MISMATCH_PARTIAL_DOWNLOAD"
-            inst["error_raw"] = f"檔案大小不符 Content-Length：預期 {clen_val} bytes，實收 {total_read} bytes"
-        elif total_read <= 0:
-            inst["installer_complete_ok"] = False
-            inst["failure_stage"] = "EMPTY_RESPONSE_BODY"
-            inst["error_raw"] = "實收位元組為 0"
-        else:
-            inst["installer_complete_ok"] = True
-            inst["sha256"] = sha256_hasher.hexdigest()
-            inst["authenticode"] = verify_fubon_authenticode_readonly(dest_file)
+        sha256_hex = sha256_hasher.hexdigest() if total_read > 0 else ""
+        inst["sha256"] = sha256_hex
 
+        auth_info = {"checked": False, "signature_status": "未測", "signer_subject": "未測", "signer_issuer": "", "cert_not_after": ""}
+        if sig_check_file.exists() and pe_info.get("has_mz_magic") and not ftype_info["is_html_login_or_block_page"]:
+            auth_info = verify_fubon_authenticode_readonly(sig_check_file)
+        inst["authenticode"] = auth_info
+
+        ver = evaluate_three_stage_download_verification(
+            http_status=inst["http_status"],
+            content_range_header=cr_header,
+            content_length_bytes=clen_val,
+            received_bytes=total_read,
+            stream_completed_cleanly=stream_completed_cleanly,
+            is_html_page=ftype_info["is_html_login_or_block_page"],
+            pe_info=pe_info,
+            sha256_hex=sha256_hex,
+            authenticode_info=auth_info,
+        )
+        inst["transport_complete"] = ver["transport_complete"]
+        inst["artifact_integrity_verified"] = ver["artifact_integrity_verified"]
+        inst["publisher_verified"] = ver["publisher_verified"]
+        inst["installer_complete_ok"] = ver["installer_complete_ok"]
+
+        if ver["installer_complete_ok"]:
+            if sig_check_file.exists():
+                os.replace(sig_check_file, dest_file)
+                inst["saved_file_path"] = str(dest_file)
+            record["status"] = FUBON_STATUS_SUCCESS
+        else:
+            if sig_check_file.exists():
+                try:
+                    os.replace(sig_check_file, unverified_bin_file)
+                    inst["quarantined_file_path"] = str(unverified_bin_file)
+                except OSError:
+                    pass
+            inst["failure_stage"] = ver["failure_stage"] or "VERIFICATION_FAILED"
+            inst["error_raw"] = (
+                f"三階段驗證未通過 (verdict={ver['verification_verdict']}, stage={inst['failure_stage']}): "
+                f"{ver['transport_reason']} | Authenticode={auth_info.get('signature_status')}"
+            )
+            record["status"] = FUBON_STATUS_FAILED
+
+    except FubonSafetyAbortError as exc:
+        dl_elapsed = round(max(0.001, time.perf_counter() - dl_t0), 3)
+        inst["elapsed_seconds"] = dl_elapsed
+        inst["received_bytes"] = total_read
+        inst["installer_complete_ok"] = False
+        inst["failure_stage"] = exc.stage
+        inst["error_raw"] = str(exc)
+        record["status"] = FUBON_STATUS_SAFETY_ABORTED
     except urllib.error.HTTPError as exc:
         dl_elapsed = round(max(0.001, time.perf_counter() - dl_t0), 3)
         inst["elapsed_seconds"] = dl_elapsed
@@ -2108,6 +2238,7 @@ def run_fubon_eplus_round(
         inst["installer_complete_ok"] = False
         inst["failure_stage"] = f"HTTP_GET_ERROR_{exc.code}"
         inst["error_raw"] = f"HTTPError {exc.code}: {exc.reason}"
+        record["status"] = FUBON_STATUS_FAILED
     except Exception as exc:
         dl_elapsed = round(max(0.001, time.perf_counter() - dl_t0), 3)
         inst["elapsed_seconds"] = dl_elapsed
@@ -2117,6 +2248,7 @@ def run_fubon_eplus_round(
         inst["installer_complete_ok"] = False
         inst["failure_stage"] = "HTTP_GET_CONNECTION_OR_READ_FAILED"
         inst["error_raw"] = f"{exc.__class__.__name__}: {exc}"
+        record["status"] = FUBON_STATUS_FAILED
     finally:
         if tmp_file.exists():
             try:
