@@ -30,6 +30,7 @@ if (($currentBranch -in @("main", "master")) -and (-not $AllowProtectedBranch)) 
 $SafeAllowedSpecs = @(
     ".gitignore",
     "AGENTS.md",
+    "CHANGELOG.md",
     "README.md",
     "requirements.txt",
     "config/targets.example.json",

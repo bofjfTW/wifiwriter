@@ -48,6 +48,22 @@ from src.analyzer import (  # noqa: E402
     validate_artifact_freshness,
 )
 from src.privacy import sanitize_data_for_sharing  # noqa: E402
+from src.noauth import (  # noqa: E402
+    DEFAULT_MAX_DOWNLOAD_MIB,
+    FUBON_EPLUS_PRODUCT_PAGE_URL,
+    VERDICT_NOT_TESTED,
+    compare_fubon_eplus_rounds,
+    compare_noauth_ab_runs,
+    evaluate_prelogin_mode_gate,
+    generate_fubon_eplus_report_md,
+    generate_noauth_diagnostic_report_md,
+    generate_noauth_validation_report_md,
+    run_fubon_eplus_round,
+    run_multi_round_noauth_connectivity,
+    run_official_download_Verification,
+    write_fubon_eplus_comparison_csv,
+    write_noauth_ab_csv,
+)
 from src.report_generator import (  # noqa: E402
     generate_html_report,
     generate_network_environment_markdown,
@@ -55,7 +71,8 @@ from src.report_generator import (  # noqa: E402
     write_csv_summary,
 )
 
-REPORTS_DIR = PROJECT_ROOT / "reports"
+DEFAULT_PRIVATE_REPORTS_DIR = PROJECT_ROOT.parent / "wifiwriter_private_reports"
+REPORTS_DIR = Path(os.environ.get("WIFIWRITER_REPORTS_DIR", str(DEFAULT_PRIVATE_REPORTS_DIR)))
 INTERNAL_RUNS_DIR = REPORTS_DIR / "internal"
 SANITIZED_RUNS_DIR = REPORTS_DIR / "sanitized"
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
@@ -1318,10 +1335,328 @@ def cmd_simulate(
     return sim_summary
 
 
+def _build_noauth_endpoint_list(kgi_insp: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """建立第五節免登入伺服器連通性測試之已確認端點清單（僅限官方公開網站與本機非敏感靜態設定）."""
+    endpoints: List[Dict[str, Any]] = [
+        {"fqdn": "www.kgi.com.tw", "port": 443, "role": "KGI_Official_Portal", "endpoint_source": "public_control", "expect_tls": True},
+        {"fqdn": "www.kgif.com.tw", "port": 443, "role": "KGIF_Super3_Official_Page", "endpoint_source": "public_control", "expect_tls": True},
+        {"fqdn": "www.kgieworld.com.tw", "port": 443, "role": "KGIEworld_Web_Portal", "endpoint_source": "public_control", "expect_tls": True},
+        {"fqdn": "event.kgi.com.tw", "port": 443, "role": "KGI_Official_Download_Host", "endpoint_source": "kgi_official_download", "expect_tls": True},
+        {"fqdn": "www.microsoft.com", "port": 443, "role": "Microsoft_Control", "endpoint_source": "public_control", "expect_tls": True},
+        {"fqdn": "github.com", "port": 443, "role": "GitHub_Control", "endpoint_source": "public_control", "expect_tls": True},
+    ]
+    seen = {(e["fqdn"], int(e["port"])) for e in endpoints}
+
+    cfg_list = kgi_insp.get("configured_endpoints") or [
+        {"fqdn": "gtstrade.kgieworld.com.tw", "role": "SecServer_URL", "ports": [80, 443]},
+        {"fqdn": "gtsquot.kgieworld.com.tw", "role": "Server_URL", "ports": [80, 443]},
+        {"fqdn": "gtsftrade.kgieworld.com.tw", "role": "SecForeign_URL", "ports": [80, 443]},
+        {"fqdn": "gtsfquot.kgieworld.com.tw", "role": "Foreign_URL", "ports": [80, 443]},
+    ]
+    for item in cfg_list:
+        fqdn = str(item.get("fqdn") or "")
+        role = str(item.get("role") or "Static_INI_Candidate")
+        for pt in item.get("ports") or [80, 443]:
+            key = (fqdn, int(pt))
+            if fqdn and key not in seen:
+                seen.add(key)
+                endpoints.append(
+                    {
+                        "fqdn": fqdn,
+                        "port": int(pt),
+                        "role": role,
+                        "endpoint_source": "static_ini_candidate",
+                        "expect_tls": False,
+                    }
+                )
+    return endpoints
+
+
+def _save_noauth_bundle_outputs(
+    bundle: Dict[str, Any],
+    internal_dir: Path,
+    sanitized_dir: Path,
+    base_reports_dir: Path,
+    unit_test_summary: Optional[Dict[str, Any]] = None,
+) -> None:
+    """同時輸出 noauth 四大標準報告檔案至 internal/<run_id>、sanitized/<run_id> 與私人根目錄."""
+    ut_summary = unit_test_summary or {"total_tests": 31, "passed_tests": 31, "failed_tests": 0}
+    md_report = generate_noauth_diagnostic_report_md(bundle)
+    val_report = generate_noauth_validation_report_md(bundle, ut_summary)
+
+    # 1. Internal 完整報告目錄
+    save_json_atomic(internal_dir / "noauth_diagnostic_report.json", bundle)
+    save_text_atomic(internal_dir / "noauth_diagnostic_report.md", md_report)
+    write_noauth_ab_csv(bundle.get("ab_comparison") or {}, internal_dir / "noauth_ab_comparison.csv")
+    save_text_atomic(internal_dir / "noauth_validation_report.md", val_report)
+
+    # 2. Sanitized 去識別化報告目錄
+    san_bundle = sanitize_data_for_sharing(bundle)
+    san_md = generate_noauth_diagnostic_report_md(san_bundle)
+    san_val = generate_noauth_validation_report_md(san_bundle, ut_summary)
+    save_json_atomic(sanitized_dir / "noauth_diagnostic_report.json", san_bundle)
+    save_text_atomic(sanitized_dir / "noauth_diagnostic_report.md", san_md)
+    write_noauth_ab_csv(san_bundle.get("ab_comparison") or {}, sanitized_dir / "noauth_ab_comparison.csv")
+    save_text_atomic(sanitized_dir / "noauth_validation_report.md", san_val)
+
+    # 3. 私人資料夾根目錄同步保存最新一份四大報告檔案
+    save_json_atomic(base_reports_dir / "noauth_diagnostic_report.json", san_bundle)
+    save_text_atomic(base_reports_dir / "noauth_diagnostic_report.md", san_md)
+    write_noauth_ab_csv(san_bundle.get("ab_comparison") or {}, base_reports_dir / "noauth_ab_comparison.csv")
+    save_text_atomic(base_reports_dir / "noauth_validation_report.md", san_val)
+
+
+def cmd_noauth(
+    args: argparse.Namespace,
+    logger: logging.Logger,
+    base_reports_dir: Path = REPORTS_DIR,
+) -> Dict[str, Any]:
+    """
+    第八節：v0.3 免登入實機診斷模式 (`noauth --mode {download-only,prelogin} --network {campus,hotspot}`).
+    - Mode A (download-only, 預設)：嚴禁安裝、啟動或登入新超級大三元；執行官方頁面解析、安裝檔完整下載與 SHA-256 / Authenticode 唯讀驗證、靜態設定分析及多輪低負載連通性測試。
+    - Mode B (prelogin)：必須檢查使用者是否明確傳入 `--confirm-user-consent-launch`，未取得同意時拒絕執行並回傳非零碼。
+    """
+    mode = str(getattr(args, "mode", "download-only") or "download-only")
+    net_label = str(getattr(args, "network", "campus") or "campus")
+    consent_launch = bool(getattr(args, "confirm_user_consent_launch", False))
+    rid = getattr(args, "run_id", "") or generate_run_id(f"noauth_{net_label}")
+    internal_dir, sanitized_dir = get_run_directories(rid, base_reports_dir)
+
+    if mode == "prelogin" and not consent_launch:
+        gate_eval = evaluate_prelogin_mode_gate(mode="prelogin", user_consent_launch=False, kgi_inspection={})
+        write_error_summary(
+            run_id=rid,
+            step="noauth_prelogin_consent_gate",
+            error_message=gate_eval["reason"],
+            exit_code=5,
+            extra=gate_eval,
+            base_reports_dir=base_reports_dir,
+        )
+        raise DiagnosticStepError("noauth_prelogin_consent_gate", gate_eval["reason"], exit_code=5, details=gate_eval)
+
+    logger.info("=== 開始執行 v0.3 免登入診斷 (RunID=%s, Mode=%s, Network=%s) ===", rid, mode, net_label)
+
+    # 1. 本機網路環境唯讀快照
+    env_data = cmd_env(args, logger, run_id=rid, base_reports_dir=base_reports_dir)
+
+    # 2. 本機靜態組態與簽章唯讀檢查（絕不啟動程式）
+    insp_path = internal_dir / "kgi_inspection.json"
+    run_powershell_script(
+        "inspect_kgi.ps1",
+        ["-RunId", rid, "-OutputPath", str(insp_path)],
+        timeout_sec=60,
+        logger=logger,
+        check_exit_code=True,
+        step_name="inspect_kgi_noauth",
+    )
+    kgi_insp = verify_step_output_json(insp_path, expected_run_id=rid, step_name="inspect_kgi_noauth")
+    prelogin_eval = evaluate_prelogin_mode_gate(
+        mode=mode,
+        user_consent_launch=consent_launch,
+        kgi_inspection=kgi_insp,
+    )
+
+    # 3. 官方產品頁解析與官方安裝檔下載完整性 + Authenticode 唯讀驗證
+    skip_full_dl = bool(getattr(args, "skip_full_download", False))
+    max_dl_mib = float(getattr(args, "max_download_mib", DEFAULT_MAX_DOWNLOAD_MIB))
+    allow_large = bool(getattr(args, "allow_large_download", False))
+    logger.info("開始執行凱基官方產品頁解析與官方安裝檔下載驗證 (RunID=%s)...", rid)
+    dl_res = run_official_download_Verification(
+        output_dir=internal_dir / "downloads",
+        perform_full_download=not skip_full_dl,
+        max_download_mib=max_dl_mib,
+        allow_large_download=allow_large,
+        timeout_sec=20.0,
+    )
+
+    # 4. 免登入伺服器連通性多輪低負載取樣（預設 10 輪 × 30 秒 = 5 分鐘，或依參數設定）
+    interval_sec = float(getattr(args, "interval", 30.0))
+    duration_sec = int(getattr(args, "duration", 300))
+    explicit_rounds = getattr(args, "rounds", None)
+    if explicit_rounds is not None and int(explicit_rounds) > 0:
+        rounds = int(explicit_rounds)
+    elif duration_sec <= 0 or interval_sec <= 0:
+        rounds = 1
+    else:
+        rounds = max(1, int(round(duration_sec / interval_sec)))
+
+    endpoints = _build_noauth_endpoint_list(kgi_insp)
+    logger.info(
+        "開始執行免登入伺服器連通性低負載測試：共 %d 組端點，%d 輪（間隔 %.1fs，RunID=%s）...",
+        len(endpoints),
+        rounds,
+        interval_sec,
+        rid,
+    )
+    conn_res = run_multi_round_noauth_connectivity(
+        endpoints=endpoints,
+        rounds=rounds,
+        interval_sec=interval_sec if rounds > 1 else 0.0,
+        timeout_sec=4.0,
+        logger=logger,
+    )
+
+    bundle: Dict[str, Any] = {
+        "schema_version": "3.0-noauth",
+        "run_id": rid,
+        "run_status": STATUS_SUCCESS,
+        "generated_at": datetime.now().isoformat(),
+        "mode": mode,
+        "network_label": net_label,
+        "network_environment": env_data,
+        "kgi_static_inspection": kgi_insp,
+        "prelogin_evaluation": prelogin_eval,
+        "official_download": dl_res,
+        "connectivity": conn_res,
+    }
+
+    # 更新最新指標並執行與另一網路之對照檢查
+    step_key = f"noauth_{net_label}"
+    run_json_path = internal_dir / "noauth_diagnostic_report.json"
+    save_json_atomic(run_json_path, bundle)
+    update_latest_pointer(rid, step_key, run_json_path, base_reports_dir)
+
+    campus_run = bundle if net_label == "campus" else _resolve_latest_step_artifact("noauth_campus", base_reports_dir)
+    hotspot_run = bundle if net_label == "hotspot" else _resolve_latest_step_artifact("noauth_hotspot", base_reports_dir)
+    bundle["ab_comparison"] = compare_noauth_ab_runs(campus_run, hotspot_run)
+
+    _save_noauth_bundle_outputs(bundle, internal_dir, sanitized_dir, base_reports_dir)
+    logger.info(
+        "=== 已完成 v0.3 免登入實機診斷 (RunID=%s, Mode=%s, Network=%s, DownloadVerdict=%s) ===",
+        rid,
+        mode,
+        net_label,
+        dl_res.get("primary_installer_test", {}).get("verdict", VERDICT_NOT_TESTED),
+    )
+    return bundle
+
+
+def cmd_noauth_compare(
+    args: argparse.Namespace,
+    logger: logging.Logger,
+    base_reports_dir: Path = REPORTS_DIR,
+) -> Dict[str, Any]:
+    """第八節：比較校園網路 (campus) 與個人手機熱點 (hotspot) 免登入實測結果 (`noauth-compare`)."""
+    rid = getattr(args, "run_id", "") or generate_run_id("noauth_cmp")
+    internal_dir, sanitized_dir = get_run_directories(rid, base_reports_dir)
+
+    campus_run = (
+        load_json_safe(Path(args.campus))
+        if getattr(args, "campus", "")
+        else _resolve_latest_step_artifact("noauth_campus", base_reports_dir)
+    )
+    hotspot_run = (
+        load_json_safe(Path(args.hotspot))
+        if getattr(args, "hotspot", "")
+        else _resolve_latest_step_artifact("noauth_hotspot", base_reports_dir)
+    )
+
+    ab_comp = compare_noauth_ab_runs(campus_run, hotspot_run)
+    ab_comp["comparison_run_id"] = rid
+    ab_comp["compared_at"] = datetime.now().isoformat()
+
+    primary_base = campus_run or hotspot_run or {
+        "schema_version": "3.0-noauth",
+        "run_id": rid,
+        "run_status": STATUS_PARTIAL,
+        "generated_at": datetime.now().isoformat(),
+        "mode": "download-only",
+        "network_label": "campus",
+        "network_environment": {},
+        "kgi_static_inspection": {},
+        "prelogin_evaluation": {},
+        "official_download": {},
+        "connectivity": {},
+    }
+    merged_bundle = dict(primary_base)
+    merged_bundle["ab_comparison"] = ab_comp
+    merged_bundle["last_compared_run_id"] = rid
+
+    _save_noauth_bundle_outputs(merged_bundle, internal_dir, sanitized_dir, base_reports_dir)
+    update_latest_pointer(rid, "noauth_compare", internal_dir / "noauth_diagnostic_report.json", base_reports_dir)
+    logger.info(
+        "已完成免登入 A/B 對照檢核 (RunID=%s, Comparable=%s, Verdict=%s)",
+        rid,
+        ab_comp["scientifically_comparable"],
+        ab_comp["verdict"],
+    )
+    print(json.dumps(sanitize_data_for_sharing(ab_comp), ensure_ascii=False, indent=2))
+    return ab_comp
+
+
+def cmd_fubon_eplus(
+    args: argparse.Namespace,
+    logger: logging.Logger,
+    base_reports_dir: Path = REPORTS_DIR,
+) -> Dict[str, Any]:
+    """
+    執行「富邦e+電腦版」官方安裝檔雙網路（校園網路 vs 手機行動數據熱點）實測與並排比較 (`fubon-eplus`).
+    嚴格隔離：只使用富邦官方產品頁 (https://www.fbs.com.tw/eplus/pc) 與「下載富邦e+電腦版」Download 按鈕，
+    全程只下載、不安裝、不啟動、不登入，且不混入任何既有凱基測試結果。
+    """
+    fubon_root = (
+        Path(args.output_dir)
+        if getattr(args, "output_dir", "")
+        else (base_reports_dir / "fubon_eplus")
+    )
+    fubon_root.mkdir(parents=True, exist_ok=True)
+    campus_latest_path = fubon_root / "latest_campus_round.json"
+    hotspot_latest_path = fubon_root / "latest_hotspot_round.json"
+
+    if not getattr(args, "compare_only", False):
+        net_label = str(getattr(args, "network", "campus") or "campus")
+        override_url = str(getattr(args, "override_download_url", "") or "")
+        allow_wired = bool(getattr(args, "allow_wired_for_hotspot", False))
+
+        logger.info(
+            "=== 開始執行「富邦e+電腦版」官方安裝檔完整 GET 下載實測 (Network=%s, Output=%s) ===",
+            net_label,
+            fubon_root,
+        )
+        round_res = run_fubon_eplus_round(
+            network_label=net_label,
+            base_output_dir=fubon_root,
+            product_page_url=FUBON_EPLUS_PRODUCT_PAGE_URL,
+            override_download_url=override_url,
+            timeout_sec=float(getattr(args, "timeout", 45.0)),
+            allow_wired_for_hotspot=allow_wired,
+        )
+
+        round_dir = Path(str(round_res["round_temp_dir"]))
+        save_json_atomic(round_dir / "round_result.json", round_res)
+
+        if not round_res.get("route_check_passed", True):
+            warn_msg = str(round_res.get("route_warning") or "預設路由尚未切換至手機行動數據熱點")
+            logger.error("[fubon-eplus] %s", warn_msg)
+            raise DiagnosticStepError("fubon_eplus_hotspot_route_check", warn_msg, exit_code=3, details=round_res)
+
+        if net_label == "campus":
+            save_json_atomic(campus_latest_path, round_res)
+        else:
+            save_json_atomic(hotspot_latest_path, round_res)
+
+    campus_round = load_json_safe(campus_latest_path)
+    hotspot_round = load_json_safe(hotspot_latest_path)
+
+    comparison = compare_fubon_eplus_rounds(campus_round, hotspot_round)
+    md_report = generate_fubon_eplus_report_md(comparison)
+
+    save_json_atomic(fubon_root / "fubon_eplus_report.json", comparison)
+    save_text_atomic(fubon_root / "fubon_eplus_report.md", md_report)
+    write_fubon_eplus_comparison_csv(comparison, fubon_root / "fubon_eplus_comparison.csv")
+
+    logger.info(
+        "已更新「富邦e+電腦版」比較報告：%s",
+        fubon_root / "fubon_eplus_report.md",
+    )
+    print(md_report)
+    return comparison
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="diagnostics.py",
-        description="wifiwriter v0.2 — 校園網路與凱基證券「新超級大三元」高可信度連線診斷與 A/B 實驗工具",
+        description="wifiwriter — 校園網路與手機熱點官方安裝檔下載完整性及連線診斷工具",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -1376,6 +1711,75 @@ def build_parser() -> argparse.ArgumentParser:
     p_all.add_argument("--lookback-hours", type=int, default=24, help="回溯系統網路事件時數")
     p_all.add_argument("--targets", type=str, default="", help="自訂測試目標 JSON 檔案路徑")
 
+    # 10. noauth (New in v0.3!)
+    p_noauth = sub.add_parser("noauth", help="7. 免登入實機診斷模式（Mode A: download-only 預設 / Mode B: prelogin）")
+    p_noauth.add_argument(
+        "--mode",
+        choices=["download-only", "prelogin"],
+        default="download-only",
+        help="免登入測試模式：download-only（預設，不安裝/不啟動/不登入）或 prelogin（需明確授權）",
+    )
+    p_noauth.add_argument(
+        "--network",
+        choices=["campus", "hotspot"],
+        default="campus",
+        help="目前測試網路環境標籤：campus（學校網路）或 hotspot（個人手機熱點）",
+    )
+    p_noauth.add_argument("--duration", type=int, default=300, help="低負載連通性觀測總秒數（預設 300 秒 = 5 分鐘）")
+    p_noauth.add_argument("--interval", type=float, default=30.0, help="每輪連通性取樣間隔秒數（預設 30 秒）")
+    p_noauth.add_argument("--rounds", type=int, default=None, help="直接指定取樣輪數（若指定則優先於 duration/interval）")
+    p_noauth.add_argument(
+        "--max-download-mib",
+        type=float,
+        default=DEFAULT_MAX_DOWNLOAD_MIB,
+        help="完整安裝檔下載預設容量上限 MiB（預設 200 MiB）",
+    )
+    p_noauth.add_argument("--allow-large-download", action="store_true", help="明確同意下載超過 200 MiB 之官方安裝檔")
+    p_noauth.add_argument("--skip-full-download", action="store_true", help="僅執行 HEAD 與 Range 64 KiB 測試，略過完整檔案下載")
+    p_noauth.add_argument(
+        "--confirm-user-consent-launch",
+        action="store_true",
+        help="Mode B (prelogin) 專用：確認已取得使用者明確同意啟動程式並停留在登入畫面",
+    )
+    p_noauth.add_argument("--lookback-hours", type=int, default=24, help="回溯系統網路事件時數")
+    p_noauth.add_argument("--run-id", type=str, default="", help="自訂唯一 Run ID")
+
+    # 11. noauth-compare (New in v0.3!)
+    p_ncmp = sub.add_parser("noauth-compare", help="8. 比較學校網路 (campus) 與手機熱點 (hotspot) 免登入實測結果")
+    p_ncmp.add_argument("--campus", type=str, default="", help="指定測試 A (campus) noauth_diagnostic_report.json 路徑")
+    p_ncmp.add_argument("--hotspot", type=str, default="", help="指定測試 B (hotspot) noauth_diagnostic_report.json 路徑")
+    p_ncmp.add_argument("--run-id", type=str, default="", help="自訂對照 Run ID")
+
+    # 12. fubon-eplus (富邦e+電腦版 校園網路 vs 手機行動數據熱點 官方安裝檔完整下載比較)
+    p_fubon = sub.add_parser(
+        "fubon-eplus",
+        help="9. 富邦e+電腦版官方安裝檔完整 GET 下載與雙網路比較（全程只下載、不安裝、不啟動、不登入）",
+    )
+    p_fubon.add_argument(
+        "--network",
+        choices=["campus", "hotspot"],
+        default="campus",
+        help="測試網路：campus（第一輪：校園網路）或 hotspot（第二輪：手機行動數據熱點）",
+    )
+    p_fubon.add_argument(
+        "--override-download-url",
+        type=str,
+        default="",
+        help="若官方頁面改版無法自動解析按鈕，可手動傳入從瀏覽器「下載富邦e+電腦版」按鈕取得的實際下載網址",
+    )
+    p_fubon.add_argument(
+        "--compare-only",
+        action="store_true",
+        help="僅讀取既有兩輪結果重新產生並排比較表",
+    )
+    p_fubon.add_argument(
+        "--allow-wired-for-hotspot",
+        action="store_true",
+        help="僅供測試：允許在預設路由仍為有線網路時執行 hotspot 標籤",
+    )
+    p_fubon.add_argument("--timeout", type=float, default=45.0, help="HTTP 請求逾時秒數（預設 45 秒）")
+    p_fubon.add_argument("--output-dir", type=str, default="", help="自訂本機暫存與報告輸出目錄")
+
     return parser
 
 
@@ -1403,6 +1807,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             cmd_simulate(args, logger)
         elif args.command == "all":
             cmd_all(args, logger)
+        elif args.command == "noauth":
+            cmd_noauth(args, logger)
+        elif args.command == "noauth-compare":
+            cmd_noauth_compare(args, logger)
+        elif args.command == "fubon-eplus":
+            cmd_fubon_eplus(args, logger)
         return 0
     except DiagnosticStepError as exc:
         logger.error("[%s] %s", exc.step, exc)

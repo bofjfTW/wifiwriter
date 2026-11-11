@@ -27,7 +27,7 @@ config/*.user.json
 *.pem
 *.kdbx
 
-# Raw logs, packet captures, crash dumps & transient runtime flags
+# Raw logs, packet captures, crash dumps, installer binaries & transient runtime flags
 *.log
 *.jsonl
 *.pcap
@@ -37,6 +37,11 @@ config/*.user.json
 *.tmp
 *.bak
 *.flag
+*.exe
+*.msi
+*.part
+downloads/
+fubon_eplus/
 
 # OS / Editor metadata
 Thumbs.db

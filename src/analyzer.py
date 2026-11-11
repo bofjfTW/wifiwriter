@@ -236,6 +236,11 @@ def classify_application_evidence(app_entry: Dict[str, Any]) -> Dict[str, str]:
             "classification": CAT_INSUFFICIENT,
             "reason": "程式已安裝且簽章已檢查，但目前未啟動執行；依診斷規範不得將未啟動程式判定為受到限制",
         }
+    if str(app_entry.get("login_state", "")).lower() in ("unauthenticated", "prelogin", "not_logged_in"):
+        return {
+            "classification": CAT_INSUFFICIENT,
+            "reason": "程式雖已啟動但處於未登入狀態（Pre-login），依規範不得將尚未登入的交易程式判定為交易連線正常",
+        }
     if active_tcp > 0:
         return {
             "classification": CAT_NORMAL,
@@ -248,21 +253,32 @@ def classify_application_evidence(app_entry: Dict[str, Any]) -> Dict[str, str]:
 
 
 def classify_download_evidence(dl_entry: Dict[str, Any]) -> Dict[str, str]:
-    """依據低資料量 HEAD 請求判定檔案下載限制."""
+    """依據低資料量 HEAD 請求或 GET 測試判定檔案下載限制（HEAD 200 不等同完整下載成功）."""
     base_code = int(dl_entry.get("base_site_status") or 0)
     dl_code = int(dl_entry.get("download_status") or 0)
     loc_lower = str(dl_entry.get("redirect_location", "")).lower()
     ftype = str(dl_entry.get("file_type", ""))
+    get_attempted = bool(dl_entry.get("get_attempted", False))
+    get_ok = bool(dl_entry.get("get_ok", False))
 
     if dl_code == 451 or any(k in loc_lower for k in BLOCK_REDIRECT_KEYWORDS):
         return {
             "classification": CAT_CONFIRMED_BLOCK,
             "reason": f"下載端點收到明確政策攔截回應或重新導向（HTTP {dl_code}, Location={dl_entry.get('redirect_location', '')}）",
         }
+    if get_attempted and not get_ok:
+        return {
+            "classification": CAT_MAYBE_RESTRICTED,
+            "reason": f"HTTP HEAD 雖回應 {dl_code}，但實際 HTTP GET 下載失敗或提前中斷（HEAD 成功不能代表完整檔案可下載）",
+        }
     if 200 <= dl_code < 400:
         return {
             "classification": CAT_NORMAL,
-            "reason": f"官方端點對 {ftype} 之 HEAD 請求正常回應（HTTP {dl_code}），無檔案型態封鎖跡象",
+            "head_only_warning": not (get_attempted and get_ok),
+            "reason": (
+                f"官方端點對 {ftype} 之 HEAD 請求正常回應（HTTP {dl_code}），標頭層無封鎖跡象"
+                "（註：單憑 HEAD 200 不能證明完整 EXE 可下載，完整驗證請使用 noauth download-only 模式）"
+            ),
         }
     if (200 <= base_code < 400) and dl_code == 0:
         return {

@@ -486,24 +486,88 @@ if ($verifiedCorePidSet.Count -gt 0 -or $verifiedChildPidSet.Count -gt 0) {
 $installRootList = @()
 foreach ($d in $installCandidates) { $installRootList += (Mask-UserPath $d) }
 
+$supertscRunning = @($runningProcesses | Where-Object { $_.name -match '^(?i)(SUPERTSC64|SuperTSC)\.exe$' }).Count -gt 0
+$axisRunning = @($runningProcesses | Where-Object { $_.name -ieq 'axis.exe' }).Count -gt 0
+
+$estCount = @($activeConnections | Where-Object { $_.state -ieq 'Established' }).Count
+$synSentCount = @($activeConnections | Where-Object { $_.state -ieq 'SynSent' -or $_.state -ieq 'SYN_SENT' }).Count
+$closeWaitCount = @($activeConnections | Where-Object { $_.state -ieq 'CloseWait' -or $_.state -ieq 'CLOSE_WAIT' }).Count
+$timeWaitCount = @($activeConnections | Where-Object { $_.state -ieq 'TimeWait' -or $_.state -ieq 'TIME_WAIT' }).Count
+$abnormalStates = @($activeConnections | Where-Object { $_.state -notmatch '^(?i)(Established|Listen)$' } | ForEach-Object { ($_.remote_address + ":" + $_.remote_port + "(" + $_.state + ")") })
+
+$matchedStaticCount = 0
+$unlistedActualCount = 0
+foreach ($obs in $observedActiveEndpoints) {
+    if ($knownKgiIpSet.Contains([string]$obs.remote_address)) {
+        $matchedStaticCount++
+    } else {
+        $unlistedActualCount++
+    }
+}
+
+$consistencyStatus = "NO_ACTIVE_CONNECTIONS"
+$consistencyDetail = "No active KGI TCP connections observed yet; static INI endpoints cannot be treated as active connections."
+if ($observedActiveEndpoints.Count -gt 0) {
+    if ($matchedStaticCount -gt 0 -and $unlistedActualCount -eq 0) {
+        $consistencyStatus = "CONSISTENT_WITH_STATIC_INI"
+        $consistencyDetail = "All observed active KGI endpoints match static YELLOWPAGE.INI resolved server IPs."
+    } elseif ($matchedStaticCount -gt 0 -and $unlistedActualCount -gt 0) {
+        $consistencyStatus = "PARTIAL_MATCH_WITH_DYNAMIC_DISPATCH"
+        $consistencyDetail = "Observed both static YELLOWPAGE.INI endpoints and additional dynamically dispatched remote IPs."
+    } else {
+        $consistencyStatus = "DYNAMIC_ENDPOINTS_DIFFER_FROM_STATIC_INI"
+        $consistencyDetail = "Observed active connections use remote IPs not listed in static YELLOWPAGE.INI DNS resolution."
+    }
+}
+
+$verificationStatus = "VERIFIED_ACTIVE_TRADING_CONNECTIONS"
+$verificationReason = "Verified KGI process is running with Established TCP connections."
+if (-not ($verifiedCorePidSet.Count -gt 0)) {
+    $verificationStatus = "NOT_VERIFIED_PROCESS_NOT_RUNNING"
+    $verificationReason = "KGI trading software (SUPERTSC64.exe / axis.exe) is not currently running."
+} elseif ($estCount -eq 0) {
+    $verificationStatus = "NOT_VERIFIED_NO_ESTABLISHED_SOCKET"
+    $verificationReason = "KGI process is running, but 0 Established remote TCP sockets were observed (may not be logged in yet or already disconnected)."
+}
+
 $outputObj = [ordered]@{
-    schema_version                = "2.0"
-    run_id                        = $RunId
-    run_status                    = "SUCCESS"
-    inspected_at                  = (Get-Date).ToString("o")
-    is_installed                  = ($installRootList.Count -gt 0)
-    is_currently_running          = ($verifiedCorePidSet.Count -gt 0)
-    install_directories           = $installRootList
-    registry_entries              = $registryEntries
-    shortcuts                     = $shortcutEntries
-    executables                   = $executables
-    running_processes             = $runningProcesses
-    rejected_same_name_processes  = $unverifiedSameNameProcesses
-    active_tcp_connections        = $activeConnections
-    observed_active_endpoints     = $observedActiveEndpoints
-    configured_endpoints          = $configuredEndpoints
-    unverified_remote_endpoints   = $unverifiedRemoteEndpoints
-    architecture_and_reconnect    = $architectureFacts
+    schema_version                         = "2.0"
+    run_id                                 = $RunId
+    run_status                             = "SUCCESS"
+    inspected_at                           = (Get-Date).ToString("o")
+    is_installed                           = ($installRootList.Count -gt 0)
+    is_currently_running                   = ($verifiedCorePidSet.Count -gt 0)
+    supertsc64_running                     = $supertscRunning
+    axis_running                           = $axisRunning
+    trading_connection_verification_status = $verificationStatus
+    trading_connection_verification_reason = $verificationReason
+    install_directories                    = $installRootList
+    registry_entries                       = $registryEntries
+    shortcuts                              = $shortcutEntries
+    executables                            = $executables
+    running_processes                      = $runningProcesses
+    rejected_same_name_processes           = $unverifiedSameNameProcesses
+    active_tcp_connections                 = $activeConnections
+    tcp_state_summary                      = [ordered]@{
+        total_connections        = $activeConnections.Count
+        established_count        = $estCount
+        syn_sent_count           = $synSentCount
+        close_wait_count         = $closeWaitCount
+        time_wait_count          = $timeWaitCount
+        has_abnormal_tcp_states  = ($synSentCount -gt 0 -or $closeWaitCount -gt 0 -or $abnormalStates.Count -gt 0)
+        abnormal_endpoints       = $abnormalStates
+    }
+    static_vs_actual_comparison            = [ordered]@{
+        has_active_connections          = ($observedActiveEndpoints.Count -gt 0)
+        matched_static_endpoints_count  = $matchedStaticCount
+        unlisted_actual_endpoints_count = $unlistedActualCount
+        consistency_status              = $consistencyStatus
+        detail                          = $consistencyDetail
+    }
+    observed_active_endpoints              = $observedActiveEndpoints
+    configured_endpoints                   = $configuredEndpoints
+    unverified_remote_endpoints            = $unverifiedRemoteEndpoints
+    architecture_and_reconnect             = $architectureFacts
 }
 
 try {

@@ -50,6 +50,7 @@ SAFE_USER_PLACEHOLDERS = {
 GIT_ALLOWED_EXACT_FILES = {
     ".gitignore",
     "AGENTS.md",
+    "CHANGELOG.md",
     "README.md",
     "requirements.txt",
     "config/targets.example.json",
@@ -78,6 +79,9 @@ GIT_FORBIDDEN_EXTENSIONS = {
     ".log",
     ".flag",
     ".pyc",
+    ".exe",
+    ".msi",
+    ".part",
 }
 
 
