@@ -164,8 +164,23 @@ def load_jsonl_safe(path: Path) -> List[Dict[str, Any]]:
     return items
 
 
+def _ensure_utf8_stdio() -> None:
+    """確保在非 UTF-8 預設語系之 Windows 主控台（如 cp1252 / cp950）輸出繁體中文不會拋出 UnicodeEncodeError."""
+    for stream in (sys.stdout, sys.stderr):
+        reconf = getattr(stream, "reconfigure", None)
+        if callable(reconf):
+            try:
+                reconf(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
+_ensure_utf8_stdio()
+
+
 def setup_logger(run_id: str = "") -> logging.Logger:
     """建立具備隱私遮罩之操作日誌系統（日誌寫入 reports/internal/operations_v02.log，不覆蓋舊檔）."""
+    _ensure_utf8_stdio()
     INTERNAL_RUNS_DIR.mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger("campus_diag_v02")
     if logger.handlers:
